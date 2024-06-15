@@ -5,9 +5,10 @@ import sys
 from torch.utils.data import DataLoader
 from sklearn.preprocessing import MinMaxScaler
 import torch.nn.functional as F
-from sklearn.metrics import average_precision_score, top_k_accuracy_score
+# from sklearn.metrics import average_precision_score
+from utils import AP_partial, accuracy
 import numpy as np
-from datasets import miniKINETICS, ACTNET
+from datasets import CUFED
 from model import ModelGCNConcAfterLocalFrame as Model_Basic_Local
 from model import ModelGCNConcAfterGlobalFrame as Model_Basic_Global
 from model import ModelGCNConcAfterClassifier as Model_Cls
@@ -17,12 +18,10 @@ parser = argparse.ArgumentParser(description='GCN Video Classification')
 parser.add_argument('vigat_model', nargs=1, help='Vigat trained model')
 parser.add_argument('gate_model', nargs=1, help='Gate trained model')
 parser.add_argument('--gcn_layers', type=int, default=2, help='number of gcn layers')
-parser.add_argument('--dataset', default='actnet', choices=['minikinetics', 'actnet'])
+parser.add_argument('--dataset', default='cufed', choices=['cufed', 'pec'])
 parser.add_argument('--dataset_root', default='/ActivityNet', help='dataset root directory')
 parser.add_argument('--batch_size', type=int, default=1, help='batch size')
-parser.add_argument('--num_objects', type=int, default=50, help='number of objects with best DoC')
 parser.add_argument('--num_workers', type=int, default=4, help='number of workers for data loader')
-parser.add_argument('--ext_method', default='VIT', choices=['VIT'], help='Extraction method for features')
 parser.add_argument('--save_scores', action='store_true', help='save the output scores')
 parser.add_argument('--save_path', default='scores.txt', help='output path')
 parser.add_argument('--cls_number', type=int, default=5, help='number of classifiers ')
@@ -37,8 +36,7 @@ def evaluate(model_gate, model_cls, model_vigat_local, model_vigat_global, datas
     gidx = 0
     class_selected = 0
     with torch.no_grad():
-        for i, batch in enumerate(loader):
-            feats, feat_global, _, _ = batch
+        for  feats, feat_global, _, _ in loader:
 
             feats = feats.to(device)
             feat_global = feat_global.to(device)
@@ -89,32 +87,29 @@ def evaluate(model_gate, model_cls, model_vigat_local, model_vigat_global, datas
             class_of_video[gidx:gidx + shape] = class_selected
             scores[gidx:gidx + shape, :] = out_data.cpu()
             gidx += shape
-        return class_vids
 
 
 def main():
     if args.dataset == 'actnet':
-        dataset = ACTNET(args.dataset_root, is_train=False, ext_method=args.ext_method)
-    elif args.dataset == 'minikinetics':
-        dataset = miniKINETICS(args.dataset_root, is_train=False, ext_method=args.ext_method)
+        dataset = CUFED(args.dataset_root, feats_dir=args.feats_dir, split_dir=args.split_dir, is_train=False)
     else:
         sys.exit("Unknown dataset!")
-    device = torch.device('cuda:0')
+        
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     loader = DataLoader(dataset, batch_size=args.batch_size, num_workers=args.num_workers)
 
     if args.verbose:
         print("running on {}".format(device))
-        print("num samples={}".format(len(dataset)))
-        print("missing videos={}".format(dataset.num_missing))
+        print("test_set={}".format(len(dataset)))
 
+    data_gate = torch.load(args.gate_model[0])
+    data_vigat = torch.load(args.vigat_model[0])
     # Gate Model
     model_gate = Model_Gate(args.gcn_layers, dataset.NUM_FEATS, num_gates=args.cls_number).to(device)
-    data_gate = torch.load(args.gate_model[0])
     model_gate.load_state_dict(data_gate['model_state_dict'])
     model_gate.eval()
     # Classifier Model
     model_cls = Model_Cls(args.gcn_layers, dataset.NUM_FEATS, dataset.NUM_CLASS).to(device)
-    data_vigat = torch.load(args.vigat_model[0])
     model_cls.load_state_dict(data_vigat['model_state_dict'])
     model_cls.eval()
     # Vigat Model Local
@@ -142,11 +137,11 @@ def main():
     class_vids = class_vids.numpy()
     num_total_vids = int(np.sum(class_vids))
     assert num_total_vids == len(dataset)
-    class_vids_rate = class_vids/num_total_vids
+    class_vids_rate = class_vids / num_total_vids
     avg_frames = int(np.sum(class_vids_rate*args.t_step))
 
-    if args.dataset == 'actnet':
-        ap = average_precision_score(dataset.labels, scores)
+    if args.dataset == 'cufed':
+        ap = AP_partial(dataset.labels, scores)[2]
         class_ap = np.zeros(args.cls_number)
         for t in range(args.cls_number):
             if sum(class_of_video == t) == 0:
@@ -160,35 +155,12 @@ def main():
                     columns_to_delete.append(check)
             current_labels = np.delete(current_labels, columns_to_delete, 1)
             current_scores = np.delete(current_scores, columns_to_delete, 1)
-            class_ap[t] = average_precision_score(current_labels, current_scores)
-
+            class_ap[t] = AP_partial(current_labels, current_scores)[2]
             # class_ap[t] = average_precision_score(dataset.labels[class_of_video == t, :],
             # scores[class_of_video == t, :], average='samples')
         for t in range(args.cls_number):
-            print('Classifier {}: top1={:.2f}% Cls frames:{}'.format(t, 100 * class_ap[t], args.t_step[t]))
-        print('top1={:.2f}% dt={:.2f}sec'.format(100 * ap, t1 - t0))
-        print('Total Exits per Classifier: {}'.format(class_vids))
-        print('Average Frames taken: {}'.format(avg_frames))
-    elif args.dataset == 'minikinetics':
-        top1 = top_k_accuracy_score(dataset.labels, scores, k=1)
-        print('top1 = {:.2f}%, dt = {:.2f}sec'.format(100 * top1, t1 - t0))
-
-        class_ap = np.zeros(args.cls_number)
-        for t in range(args.cls_number):
-            if sum(class_of_video == t) == 0:
-                print('No Videos fetched by classifier {}'.format(t))
-                continue
-            current_labels = dataset.labels[class_of_video == t]
-            current_scores = scores[class_of_video == t, :]
-            columns_to_delete = []
-            classes = np.arange(0, dataset.NUM_CLASS)
-            for check in range(dataset.NUM_CLASS):
-                if classes[check] not in current_labels:
-                    columns_to_delete.append(check)
-            current_scores = np.delete(current_scores, columns_to_delete, 1)
-            class_ap[t] = top_k_accuracy_score(current_labels, current_scores, k=1)
-        for t in range(args.cls_number):
-            print('Classifier {}: top1={:.2f}% Cls frames:{}'.format(t, 100 * class_ap[t], args.t_step[t]))
+            print('Classifier {}: top1={:.2f}% Cls frames:{}'.format(t, class_ap[t], args.t_step[t]))
+        print('top1={:.2f}% dt={:.2f}sec'.format(ap, t1 - t0))
         print('Total Exits per Classifier: {}'.format(class_vids))
         print('Average Frames taken: {}'.format(avg_frames))
 

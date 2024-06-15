@@ -206,10 +206,8 @@ class ModelGCNConcAfterGlobal(nn.Module):
         self.cls = ClassifierSimple(num_feats, int(num_feats/2), num_class)
 
     def forward(self, feat_global):
-
         y = self.graph(feat_global)
         x = self.cls(y)
-
         return x, y
 
 
@@ -219,7 +217,7 @@ class ModelGCNConcAfterFrame(nn.Module):
         self.graph = GraphModule(gcn_layers, num_feats)
         self.classifiers = nn.ModuleList()
         self.num_frame_classifiers = num_frame_classifiers
-        for m in range(0, self.num_frame_classifiers):
+        for _ in range(self.num_frame_classifiers):
             self.classifiers.append(ClassifierSimple(2 * num_feats, num_feats, num_class))
 
     def forward(self, feats, feat_global_single, feat_single_previous, t_c=torch.tensor(0), get_adj=False):
@@ -280,7 +278,7 @@ class ExitingGates(nn.Module):
         super(ExitingGates, self).__init__()
         self.exiting_gates = nn.ModuleList()
         self.num_gates = num_gates
-        for m in range(0, self.num_gates):
+        for _ in range(self.num_gates):
             self.exiting_gates.append(ExitingGate(in_planes))
 
     def forward(self, x0, x1, gate_num, force_hard=True, prev_features=None):
@@ -308,7 +306,7 @@ class ExitingGatesGAT(nn.Module):
         super(ExitingGatesGAT, self).__init__()
         self.exiting_gates = nn.ModuleList()
         self.num_gates = num_gates
-        for m in range(0, self.num_gates):
+        for _ in range(self.num_gates):
             self.exiting_gates.append(ExitingGateGAT(gcn_layers, num_feats))
 
     def forward(self, feat, gate_num):
@@ -321,7 +319,7 @@ class ModelClassifier(nn.Module):
         super(ModelClassifier, self).__init__()
         self.classifiers = nn.ModuleList()
         self.num_frame_classifiers = num_frame_classifiers
-        for m in range(0, self.num_frame_classifiers):
+        for _ in range(self.num_frame_classifiers):
             self.classifiers.append(ClassifierSimple(2 * num_feats, num_feats, num_class))
 
     def forward(self, y, t_c=torch.tensor(0)):
@@ -362,7 +360,7 @@ class ExitingGatesGATCNN(nn.Module):
         super(ExitingGatesGATCNN, self).__init__()
         self.exiting_gates = nn.ModuleList()
         self.num_gates = num_gates
-        for m in range(0, self.num_gates):
+        for _ in range(self.num_gates):
             self.exiting_gates.append(ExitingGateGATCNN(gcn_layers, in_planes=num_feats))
 
     def forward(self, feat, gate_num):
@@ -374,14 +372,15 @@ class ModelGCNConcAfterGlobalFrame(nn.Module):
     def __init__(self, gcn_layers, num_feats, num_class):
         super().__init__()
         self.graph = GraphModule(gcn_layers, num_feats)
+        self.graph_omega = GraphModule(gcn_layers, num_feats)
         self.cls = ClassifierSimple(2 * num_feats, num_feats, num_class)
 
     def forward(self, feat_global, get_adj=False):
         if get_adj is False:
-            y = self.graph(feat_global)
+            y = self.graph_omega(feat_global)
             return y
         else:
-            y, adjframeglobal = self.graph(feat_global, get_adj)
+            y, adjframeglobal = self.graph_omega(feat_global, get_adj)
             adjframeglobal = adjframeglobal.cpu()
             wids_frame_global = adjframeglobal.detach().numpy().sum(axis=1)
 
@@ -392,18 +391,20 @@ class ModelGCNConcAfterLocalFrame(nn.Module):
     def __init__(self, gcn_layers, num_feats, num_class):
         super().__init__()
         self.graph = GraphModule(gcn_layers, num_feats)
+        self.graph_omega = GraphModule(gcn_layers, num_feats)
         self.cls = ClassifierSimple(2 * num_feats, num_feats, num_class)
 
     def forward(self, feats, get_adj=False):
         N, FR, B, NF = feats.shape
         feats = feats.view(N * FR, B, NF)
+
         if get_adj:
             x, adjobj = self.graph(feats, get_adj)
             adjobj = adjobj.cpu()
             wids_objects = adjobj.numpy().sum(axis=1)
             x = x.view(N, FR, -1)
 
-            x, adjframelocal = self.graph(x, get_adj)
+            x, adjframelocal = self.graph_omega(x, get_adj)
             adjframelocal = adjframelocal.cpu()
             wids_frame_local = adjframelocal.numpy().sum(axis=1)
 
@@ -411,7 +412,7 @@ class ModelGCNConcAfterLocalFrame(nn.Module):
         else:
             x = self.graph(feats)
             x = x.view(N, FR, -1)
-            x = self.graph(x)
+            x = self.graph_omega(x)
 
         return x
 
@@ -420,6 +421,7 @@ class ModelGCNConcAfterClassifier(nn.Module):
     def __init__(self, gcn_layers, num_feats, num_class):
         super().__init__()
         self.graph = GraphModule(gcn_layers, num_feats)
+        self.graph_omega = GraphModule(gcn_layers, num_feats)
         self.cls = ClassifierSimple(2 * num_feats, num_feats, num_class)
 
     def forward(self, feats):
