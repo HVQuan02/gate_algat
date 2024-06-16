@@ -5,8 +5,8 @@ import sys
 from torch.utils.data import DataLoader
 from sklearn.preprocessing import MinMaxScaler
 import torch.nn.functional as F
-# from sklearn.metrics import average_precision_score
-from utils import AP_partial, accuracy
+from sklearn.metrics import average_precision_score, accuracy_score
+from utils import AP_partial
 import numpy as np
 from datasets import CUFED
 from model import ModelGCNConcAfterLocalFrame as Model_Basic_Local
@@ -142,6 +142,7 @@ def main():
 
     if args.dataset == 'cufed':
         ap = AP_partial(dataset.labels, scores)[2]
+        acc = accuracy_score(dataset.labels, scores)
         class_ap = np.zeros(args.cls_number)
         for t in range(args.cls_number):
             if sum(class_of_video == t) == 0:
@@ -159,8 +160,8 @@ def main():
             # class_ap[t] = average_precision_score(dataset.labels[class_of_video == t, :],
             # scores[class_of_video == t, :], average='samples')
         for t in range(args.cls_number):
-            print('Classifier {}: top1={:.2f}% Cls frames:{}'.format(t, class_ap[t], args.t_step[t]))
-        print('top1={:.2f}% dt={:.2f}sec'.format(ap, t1 - t0))
+            print('Classifier {}: map={:.2f}% Cls frames:{}'.format(t, class_ap[t], args.t_step[t]))
+        print('map={:.2f}% accuracy={:.2f}% dt={:.2f}sec'.format(ap, acc, t1 - t0))
         print('Total Exits per Classifier: {}'.format(class_vids))
         print('Average Frames taken: {}'.format(avg_frames))
 
