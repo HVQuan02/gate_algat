@@ -5,7 +5,7 @@ import sys
 from torch.utils.data import DataLoader
 from sklearn.preprocessing import MinMaxScaler
 import torch.nn.functional as F
-from sklearn.metrics import average_precision_score, accuracy_score
+from sklearn.metrics import accuracy_score
 from utils import AP_partial
 import numpy as np
 from datasets import CUFED
@@ -36,7 +36,7 @@ def evaluate(model_gate, model_cls, model_vigat_local, model_vigat_global, datas
     gidx = 0
     class_selected = 0
     with torch.no_grad():
-        for  feats, feat_global, _, _ in loader:
+        for  feats, feat_global, _ in loader:
 
             feats = feats.to(device)
             feat_global = feat_global.to(device)
