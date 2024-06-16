@@ -29,7 +29,7 @@ parser.add_argument('--num_epochs', type=int, default=40, help='number of epochs
 parser.add_argument('--batch_size', type=int, default=64, help='batch size')
 parser.add_argument('--num_workers', type=int, default=4, help='number of workers for data loader')
 parser.add_argument('--resume', default=None, help='checkpoint to resume training')
-parser.add_argument('--save_dir', default='weights', help='directory to save checkpoints')
+parser.add_argument('--save_dir', default='/kaggle/working/weights', help='directory to save checkpoints')
 parser.add_argument('--cls_number', type=int, default=5, help='number of classifiers')
 parser.add_argument('--t_step', nargs="+", type=int, default=[3, 5, 7, 9, 13], help='Classifier frames')
 parser.add_argument('--t_array', nargs="+", type=int, default=[1, 2, 3, 4, 5], help='e_t calculation')
@@ -209,7 +209,7 @@ def main():
 
     start_epoch = 0
     # Gate Model
-    model_gate = Model_Gate(args.gcn_layers, train_dataset.NUM_FEATS, cls_number=args.cls_number).to(device)
+    model_gate = Model_Gate(args.gcn_layers, train_dataset.NUM_FEATS, num_gates=args.cls_number).to(device)
     opt = optim.Adam(model_gate.parameters(), lr=args.lr)
     sched = optim.lr_scheduler.MultiStepLR(opt, milestones=args.milestones)
     early_stopper = EarlyStopper(patience=args.patience, min_delta=args.min_delta, threshold=args.threshold)
@@ -236,7 +236,7 @@ def main():
         t1 = time.perf_counter()
 
         t2 = time.perf_counter()
-        val_loss = train_frame(model_cls, model_gate, model_vigat_local, model_vigat_global, val_dataset, val_loader, crit, crit_gate, device)
+        val_loss = evaluate_frame(model_cls, model_gate, model_vigat_local, model_vigat_global, val_dataset, val_loader, crit, crit_gate, device)
         t3 = time.perf_counter()
 
         is_early_stopping, is_save_ckpt = early_stopper.early_stop(val_loss)

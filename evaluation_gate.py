@@ -1,10 +1,11 @@
 import argparse
 import time
 import torch
+import torch.nn as nn
+import torch.nn.functional as F
 import sys
 from torch.utils.data import DataLoader
 from sklearn.preprocessing import MinMaxScaler
-import torch.nn.functional as F
 from sklearn.metrics import accuracy_score
 from utils import AP_partial
 import numpy as np
@@ -19,7 +20,9 @@ parser.add_argument('vigat_model', nargs=1, help='Vigat trained model')
 parser.add_argument('gate_model', nargs=1, help='Gate trained model')
 parser.add_argument('--gcn_layers', type=int, default=2, help='number of gcn layers')
 parser.add_argument('--dataset', default='cufed', choices=['cufed', 'pec'])
-parser.add_argument('--dataset_root', default='/ActivityNet', help='dataset root directory')
+parser.add_argument('--dataset_root', default='/kaggle/input/thesis-cufed/CUFED', help='dataset root directory')
+parser.add_argument('--feats_dir', default='/kaggle/input/mask-cufed-feats', help='global and local features directory')
+parser.add_argument('--split_dir', default='/kaggle/input/cufed-full-split', help='train split and val split')
 parser.add_argument('--batch_size', type=int, default=1, help='batch size')
 parser.add_argument('--num_workers', type=int, default=4, help='number of workers for data loader')
 parser.add_argument('--save_scores', action='store_true', help='save the output scores')
@@ -27,6 +30,7 @@ parser.add_argument('--save_path', default='scores.txt', help='output path')
 parser.add_argument('--cls_number', type=int, default=5, help='number of classifiers ')
 parser.add_argument('--t_step', nargs="+", type=int, default=[3, 5, 7, 9, 13], help='Classifier frames')
 parser.add_argument('--t_array', nargs="+", type=int, default=[1, 2, 3, 4, 5], help='e_t calculation')
+parser.add_argument('--threshold', type=float, default=0.8, help='threshold for logits to labels')
 parser.add_argument('-v', '--verbose', action='store_true', help='show details')
 args = parser.parse_args()
 
@@ -90,7 +94,7 @@ def evaluate(model_gate, model_cls, model_vigat_local, model_vigat_global, datas
 
 
 def main():
-    if args.dataset == 'actnet':
+    if args.dataset == 'cufed':
         dataset = CUFED(args.dataset_root, feats_dir=args.feats_dir, split_dir=args.split_dir, is_train=False)
     else:
         sys.exit("Unknown dataset!")
@@ -132,6 +136,11 @@ def main():
     t1 = time.perf_counter()
 
     # Change tensors to 1d-arrays
+    m = nn.Softmax(dim=1)
+    preds = m(scores)
+    preds[preds >= args.threshold] = 1
+    preds[preds < args.threshold] = 0
+    preds = preds.numpy()
     scores = scores.numpy()
     class_of_video = class_of_video.numpy()
     class_vids = class_vids.numpy()
@@ -142,7 +151,7 @@ def main():
 
     if args.dataset == 'cufed':
         ap = AP_partial(dataset.labels, scores)[2]
-        acc = accuracy_score(dataset.labels, scores)
+        acc = accuracy_score(dataset.labels, preds)
         class_ap = np.zeros(args.cls_number)
         for t in range(args.cls_number):
             if sum(class_of_video == t) == 0:
@@ -160,8 +169,8 @@ def main():
             # class_ap[t] = average_precision_score(dataset.labels[class_of_video == t, :],
             # scores[class_of_video == t, :], average='samples')
         for t in range(args.cls_number):
-            print('Classifier {}: map={:.2f}% Cls frames:{}'.format(t, class_ap[t], args.t_step[t]))
-        print('map={:.2f}% accuracy={:.2f}% dt={:.2f}sec'.format(ap, acc, t1 - t0))
+            print('classifier_{}: map={:.2f} cls_frames={}'.format(t, class_ap[t], args.t_step[t]))
+        print('map={:.2f} accuracy={:.2f} dt={:.2f}sec'.format(ap, acc * 100, t1 - t0))
         print('Total Exits per Classifier: {}'.format(class_vids))
         print('Average Frames taken: {}'.format(avg_frames))
 
