@@ -15,7 +15,7 @@ from model import ModelGCNConcAfterGlobalFrame as Model_Basic_Global
 from model import ModelGCNConcAfterClassifier as Model_Cls
 from model import ExitingGatesGATCNN as Model_Gate
 
-parser = argparse.ArgumentParser(description='GCN Video Classification')
+parser = argparse.ArgumentParser(description='GCN Album Classification')
 parser.add_argument('--seed', type=int, default=2024, help='seed for randomness')
 parser.add_argument('vigat_model', nargs=1, help='Frame trained model')
 parser.add_argument('--gcn_layers', type=int, default=2, help='number of gcn layers')
@@ -34,23 +34,22 @@ parser.add_argument('--cls_number', type=int, default=5, help='number of classif
 parser.add_argument('--t_step', nargs="+", type=int, default=[3, 5, 7, 9, 13], help='Classifier frames')
 parser.add_argument('--t_array', nargs="+", type=int, default=[1, 2, 3, 4, 5], help='e_t calculation')
 parser.add_argument('--beta', type=float, default=1e-6, help='Multiplier of gating loss schedule')
-parser.add_argument('--patience', type=int, default=30, help='patience of early stopping')
+parser.add_argument('--patience', type=int, default=20, help='patience of early stopping')
 parser.add_argument('--min_delta', type=float, default=1e-3, help='min delta of early stopping')
-parser.add_argument('--threshold', type=float, default=0.05, help='val loss threshold of early stopping')
+parser.add_argument('--stopping_threshold', type=float, default=0.01, help='stopping threshold of val loss for early stopping')
 parser.add_argument('-v', '--verbose', action='store_true', help='show details')
 args = parser.parse_args()
 
-
 class EarlyStopper:
-    def __init__(self, patience, min_delta, threshold):
+    def __init__(self, patience, min_delta, stopping_threshold):
         self.patience = patience
         self.min_delta = min_delta
         self.counter = 0
         self.min_val_loss = float('inf')
-        self.threshold = threshold
+        self.stopping_threshold = stopping_threshold
 
     def early_stop(self, validation_mAP):
-        if validation_mAP <= self.threshold:
+        if validation_mAP <= self.stopping_threshold:
             return True, True
         if validation_mAP < self.min_val_loss:
             self.min_val_loss = validation_mAP
@@ -61,7 +60,6 @@ class EarlyStopper:
             if self.counter > self.patience:
                 return True, False
         return False, False
-
 
 def train_frame(model_cls, model_gate, model_vigat_local, model_vigat_global, dataset, loader, crit, crit_gate, opt, sched, device):
     model_gate.train()
@@ -180,7 +178,6 @@ def evaluate_frame(model_cls, model_gate, model_vigat_local, model_vigat_global,
 
         return epoch_loss / len(loader)
 
-
 def main():
     if args.seed:
         np.random.seed(args.seed)
@@ -212,7 +209,7 @@ def main():
     model_gate = Model_Gate(args.gcn_layers, train_dataset.NUM_FEATS, num_gates=args.cls_number).to(device)
     opt = optim.Adam(model_gate.parameters(), lr=args.lr)
     sched = optim.lr_scheduler.MultiStepLR(opt, milestones=args.milestones)
-    early_stopper = EarlyStopper(patience=args.patience, min_delta=args.min_delta, threshold=args.threshold)
+    early_stopper = EarlyStopper(patience=args.patience, min_delta=args.min_delta, stopping_threshold=args.stopping_threshold)
     data_vigat = torch.load(args.vigat_model[0])
     # Classifier Model
     model_cls = Model_Cls(args.gcn_layers, train_dataset.NUM_FEATS, train_dataset.NUM_CLASS).to(device)

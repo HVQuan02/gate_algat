@@ -6,16 +6,17 @@ import torch.nn.functional as F
 import sys
 from torch.utils.data import DataLoader
 from sklearn.preprocessing import MinMaxScaler
-from sklearn.metrics import accuracy_score
-from utils import AP_partial
+from sklearn.metrics import accuracy_score, multilabel_confusion_matrix, classification_report
+from utils import AP_partial, spearman_correlation, showCM
 import numpy as np
 from datasets import CUFED
+from model import ModelGCNConcAfter as Model
 from model import ModelGCNConcAfterLocalFrame as Model_Basic_Local
 from model import ModelGCNConcAfterGlobalFrame as Model_Basic_Global
 from model import ModelGCNConcAfterClassifier as Model_Cls
 from model import ExitingGatesGATCNN as Model_Gate
 
-parser = argparse.ArgumentParser(description='GCN Video Classification')
+parser = argparse.ArgumentParser(description='GCN Album Classification')
 parser.add_argument('vigat_model', nargs=1, help='Vigat trained model')
 parser.add_argument('gate_model', nargs=1, help='Gate trained model')
 parser.add_argument('--gcn_layers', type=int, default=2, help='number of gcn layers')
@@ -30,18 +31,73 @@ parser.add_argument('--save_path', default='scores.txt', help='output path')
 parser.add_argument('--cls_number', type=int, default=5, help='number of classifiers ')
 parser.add_argument('--t_step', nargs="+", type=int, default=[3, 5, 7, 9, 13], help='Classifier frames')
 parser.add_argument('--t_array', nargs="+", type=int, default=[1, 2, 3, 4, 5], help='e_t calculation')
-parser.add_argument('--threshold', type=float, default=0.8, help='threshold for logits to labels')
+parser.add_argument('--threshold', type=float, default=0.75, help='threshold for logits to labels')
 parser.add_argument('-v', '--verbose', action='store_true', help='show details')
 args = parser.parse_args()
 
+def evaluate_vigat(model, dataset, loader, device):
+    print('**********ViGAT**********')
+    t0 = time.perf_counter()
 
-def evaluate(model_gate, model_cls, model_vigat_local, model_vigat_global, dataset, loader, scores, class_of_video,
-             class_vids, device):
+    scores = torch.zeros((len(dataset), dataset.NUM_CLASS), dtype=torch.float32)
+    gidx = 0
+    model.eval()
+    importance_list = []
+    frame_wid_list = []
+    obj_wid_list = []
+
+    with torch.no_grad():
+        for batch in loader:
+            feats, feat_global, _, importances = batch
+
+            # Run model with all frames
+            feats = feats.to(device)
+            feat_global = feat_global.to(device)
+            out_data, wids_objects, wids_frame_local, wids_frame_global = model(feats, feat_global, device, get_adj=True)
+
+            shape = out_data.shape[0]
+
+            scores[gidx:gidx+shape, :] = out_data.cpu()
+            gidx += shape
+            importance_list.append(importances)
+            avg_frame_wid = (wids_frame_local + wids_frame_global) / 2
+            frame_wid_list.append(torch.from_numpy(avg_frame_wid))
+            obj_wid_list.append(torch.from_numpy(wids_objects))
+    
+    m = nn.Sigmoid(dim=1)
+    preds = m(scores)
+    preds[preds >= args.threshold] = 1
+    preds[preds < args.threshold] = 0
+    scores, preds = scores.numpy(), preds.numpy()
+
+    map_micro, map_macro = AP_partial(dataset.labels, scores)[1:3]
+
+    acc = accuracy_score(dataset.labels, preds)
+
+    cms = multilabel_confusion_matrix(dataset.labels, preds)
+    cr = classification_report(dataset.labels, preds)
+    
+    importance_matrix = torch.cat(importance_list).to(device)
+    wid_frame_matrix = torch.cat(frame_wid_list).to(device)
+    wid_obj_matrix = torch.cat(obj_wid_list).to(device)
+    frame_spearman = spearman_correlation(wid_frame_matrix, importance_matrix)
+    obj_spearman = spearman_correlation(wid_obj_matrix, importance_matrix)
+
+    t1 = time.perf_counter()
+
+    print('map_micro={:.2f} map_macro={:.2f} accuracy={:.2f} spearman_global={:.2f} spearman_local={:.2f} dt={:.2f}sec'.format(map_micro, map_macro, acc * 100, frame_spearman, obj_spearman, t1 - t0))
+    print(cr)
+    showCM(cms)
+
+def evaluate_gate(model_gate, model_cls, model_vigat_local, model_vigat_global, dataset, loader, scores, class_of_video, class_vids, device):
+    print('**********Gate**********')
+    t0 = time.perf_counter()
+
     gidx = 0
     class_selected = 0
-    with torch.no_grad():
-        for  feats, feat_global, _ in loader:
 
+    with torch.no_grad():
+        for  feats, feat_global, _, _ in loader:
             feats = feats.to(device)
             feat_global = feat_global.to(device)
             feat_global_single, wids_frame_global = model_vigat_global(feat_global, get_adj=True)
@@ -92,6 +148,53 @@ def evaluate(model_gate, model_cls, model_vigat_local, model_vigat_global, datas
             scores[gidx:gidx + shape, :] = out_data.cpu()
             gidx += shape
 
+    t1 = time.perf_counter()
+
+    # Change tensors to 1d-arrays
+    m = nn.Sigmoid(dim=1)
+    preds = m(scores)
+    preds[preds >= args.threshold] = 1
+    preds[preds < args.threshold] = 0
+    preds = preds.numpy()
+    scores = scores.numpy()
+
+    class_of_video = class_of_video.numpy()
+    class_vids = class_vids.numpy()
+    num_total_vids = int(np.sum(class_vids))
+    assert num_total_vids == len(dataset)
+    class_vids_rate = class_vids / num_total_vids
+    avg_frames = int(np.sum(class_vids_rate*args.t_step))
+
+    if args.dataset == 'cufed':
+        map_micro, map_macro = AP_partial(dataset.labels, scores)[1:3]
+        acc = accuracy_score(dataset.labels, preds)
+        class_ap = np.zeros(args.cls_number)   
+        cms = multilabel_confusion_matrix(dataset.labels, preds)
+        cr = classification_report(dataset.labels, preds)
+
+        for t in range(args.cls_number):
+            if sum(class_of_video == t) == 0:
+                print('No Videos fetched by classifier {}'.format(t))
+                continue
+            current_labels = dataset.labels[class_of_video == t, :]
+            current_scores = scores[class_of_video == t, :]
+            columns_to_delete = []
+            for check in range(current_labels.shape[1]):
+                if sum(current_labels[:, check]) == 0:
+                    columns_to_delete.append(check)
+            current_labels = np.delete(current_labels, columns_to_delete, 1)
+            current_scores = np.delete(current_scores, columns_to_delete, 1)
+            class_ap[t] = AP_partial(current_labels, current_scores)[2]
+            # class_ap[t] = average_precision_score(dataset.labels[class_of_video == t, :],
+            # scores[class_of_video == t, :], average='samples')
+
+        for t in range(args.cls_number):
+            print('classifier_{}: map={:.2f} cls_frames={}'.format(t, class_ap[t], args.t_step[t]))
+        print('map_micro={:.2f} map_macro={:.2f} accuracy={:.2f} dt={:.2f}sec'.format(map_micro, map_macro, acc * 100, t1 - t0))
+        print('Total Exits per Classifier: {}'.format(class_vids))
+        print('Average Frames taken: {}'.format(avg_frames))
+        print(cr)
+        showCM(cms)
 
 def main():
     if args.dataset == 'cufed':
@@ -112,10 +215,10 @@ def main():
     model_gate = Model_Gate(args.gcn_layers, dataset.NUM_FEATS, num_gates=args.cls_number).to(device)
     model_gate.load_state_dict(data_gate['model_state_dict'])
     model_gate.eval()
-    # Classifier Model
-    model_cls = Model_Cls(args.gcn_layers, dataset.NUM_FEATS, dataset.NUM_CLASS).to(device)
-    model_cls.load_state_dict(data_vigat['model_state_dict'])
-    model_cls.eval()
+    # Vigat Model
+    model = Model(args.gcn_layers, dataset.NUM_FEATS, dataset.NUM_CLASS).to(device)
+    model.load_state_dict(data_vigat['model_state_dict'])
+    model.eval()
     # Vigat Model Local
     model_vigat_local = Model_Basic_Local(args.gcn_layers, dataset.NUM_FEATS, dataset.NUM_CLASS).to(device)
     model_vigat_local.load_state_dict(data_vigat['model_state_dict'])
@@ -124,55 +227,19 @@ def main():
     model_vigat_global = Model_Basic_Global(args.gcn_layers, dataset.NUM_FEATS, dataset.NUM_CLASS).to(device)
     model_vigat_global.load_state_dict(data_vigat['model_state_dict'])
     model_vigat_global.eval()
+    # Classifier Model
+    model_cls = Model_Cls(args.gcn_layers, dataset.NUM_FEATS, dataset.NUM_CLASS).to(device)
+    model_cls.load_state_dict(data_vigat['model_state_dict'])
+    model_cls.eval()
 
     num_test = len(dataset)
     scores = torch.zeros((num_test, dataset.NUM_CLASS), dtype=torch.float32)
     class_of_video = torch.zeros(num_test, dtype=torch.int)
     class_vids = torch.zeros(args.cls_number)
 
-    t0 = time.perf_counter()
-    evaluate(model_gate, model_cls, model_vigat_local, model_vigat_global, dataset, loader, scores,
+    evaluate_gate(model_gate, model_cls, model_vigat_local, model_vigat_global, dataset, loader, scores,
              class_of_video, class_vids, device)
-    t1 = time.perf_counter()
-
-    # Change tensors to 1d-arrays
-    m = nn.Softmax(dim=1)
-    preds = m(scores)
-    preds[preds >= args.threshold] = 1
-    preds[preds < args.threshold] = 0
-    preds = preds.numpy()
-    scores = scores.numpy()
-    class_of_video = class_of_video.numpy()
-    class_vids = class_vids.numpy()
-    num_total_vids = int(np.sum(class_vids))
-    assert num_total_vids == len(dataset)
-    class_vids_rate = class_vids / num_total_vids
-    avg_frames = int(np.sum(class_vids_rate*args.t_step))
-
-    if args.dataset == 'cufed':
-        ap = AP_partial(dataset.labels, scores)[2]
-        acc = accuracy_score(dataset.labels, preds)
-        class_ap = np.zeros(args.cls_number)
-        for t in range(args.cls_number):
-            if sum(class_of_video == t) == 0:
-                print('No Videos fetched by classifier {}'.format(t))
-                continue
-            current_labels = dataset.labels[class_of_video == t, :]
-            current_scores = scores[class_of_video == t, :]
-            columns_to_delete = []
-            for check in range(current_labels.shape[1]):
-                if sum(current_labels[:, check]) == 0:
-                    columns_to_delete.append(check)
-            current_labels = np.delete(current_labels, columns_to_delete, 1)
-            current_scores = np.delete(current_scores, columns_to_delete, 1)
-            class_ap[t] = AP_partial(current_labels, current_scores)[2]
-            # class_ap[t] = average_precision_score(dataset.labels[class_of_video == t, :],
-            # scores[class_of_video == t, :], average='samples')
-        for t in range(args.cls_number):
-            print('classifier_{}: map={:.2f} cls_frames={}'.format(t, class_ap[t], args.t_step[t]))
-        print('map={:.2f} accuracy={:.2f} dt={:.2f}sec'.format(ap, acc * 100, t1 - t0))
-        print('Total Exits per Classifier: {}'.format(class_vids))
-        print('Average Frames taken: {}'.format(avg_frames))
+    evaluate_vigat(model, dataset, loader, device)
 
 
 if __name__ == '__main__':

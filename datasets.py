@@ -15,15 +15,21 @@ class CUFED(Dataset):
                     'Protest', 'ReligiousActivity', 'Show', 'Sports', 'ThemePark',
                     'UrbanTrip', 'Wedding', 'Zoo']
 
-    def __init__(self, root_dir, feats_dir, split_dir, is_train=True, is_val=False):
+    def get_album_importance(self, album_imgs, album_importance):
+        img_score_dict = {}
+        for _, image, score in album_importance:
+            img_score_dict[image.split('/')[1]] = score
+        importances = np.zeros(len(album_imgs))
+        for i, image in enumerate(album_imgs):
+            importances[i] = img_score_dict[image[:-4]]
+        return importances
+
+    def __init__(self, root_dir, feats_dir, split_dir, is_train=True):
         self.root_dir = root_dir
         self.feats_dir = feats_dir
         
         if is_train:
-            if is_val:
-                self.phase = 'val'
-            else:
-                self.phase = 'train'
+            self.phase = 'train'
         else:
             self.phase = 'test'
             
@@ -32,14 +38,24 @@ class CUFED(Dataset):
 
         if self.phase == 'train':
             split_path = os.path.join(split_dir, 'train_split.txt')
-        elif self.phase == 'val':
-            split_path = os.path.join(split_dir, 'val_split.txt')
         else:
             split_path = os.path.join(split_dir, 'test_split.txt')
 
         with open(split_path, 'r') as f:
             album_names = f.readlines()
         vidname_list = [name.strip() for name in album_names]
+
+        if self.phase == 'test':
+            importance_path = os.path.join(root_dir, "image_importance.json")
+            with open(importance_path, 'r') as f:
+                album_importance = json.load(f)
+
+            album_imgs_path = os.path.join(split_dir, "album_imgs.json")
+            with open(album_imgs_path, 'r') as f:
+                album_imgs = json.load(f)
+                
+            self.importance = album_importance
+            self.album_imgs = album_imgs
 
         label_path = os.path.join(root_dir, "event_type.json")
         with open(label_path, 'r') as f:
@@ -65,5 +81,11 @@ class CUFED(Dataset):
         feat_local = np.load(local_path)
         feat_global = np.load(global_path)
         label = self.labels[idx, :]
+        
+        if self.phase == 'test':
+            album_importance = self.importance[name]
+            album_imgs = self.album_imgs[name]
+            importances = self.get_album_importance(album_imgs, album_importance)
+            return feat_local, feat_global, label, importances
         
         return feat_local, feat_global, label
