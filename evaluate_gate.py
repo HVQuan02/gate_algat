@@ -36,7 +36,7 @@ parser.add_argument('-v', '--verbose', action='store_true', help='show details')
 args = parser.parse_args()
 
 def evaluate_vigat(model, dataset, loader, device):
-    print('**********ViGAT**********')
+    print('____________________ViGAT____________________')
     t0 = time.perf_counter()
 
     scores = torch.zeros((len(dataset), dataset.NUM_CLASS), dtype=torch.float32)
@@ -53,7 +53,7 @@ def evaluate_vigat(model, dataset, loader, device):
             # Run model with all frames
             feats = feats.to(device)
             feat_global = feat_global.to(device)
-            out_data, wids_objects, wids_frame_local, wids_frame_global = model(feats, feat_global, device, get_adj=True)
+            out_data, wids_objects, wids_frame_local, wids_frame_global = model(feats, feat_global, get_adj=True)
 
             shape = out_data.shape[0]
 
@@ -62,9 +62,9 @@ def evaluate_vigat(model, dataset, loader, device):
             importance_list.append(importances)
             avg_frame_wid = (wids_frame_local + wids_frame_global) / 2
             frame_wid_list.append(torch.from_numpy(avg_frame_wid))
-            obj_wid_list.append(torch.from_numpy(wids_objects))
+            obj_wid_list.append(torch.from_numpy(np.reshape(wids_objects.mean(axis=1), (shape, -1))))
     
-    m = nn.Sigmoid(dim=1)
+    m = nn.Sigmoid()
     preds = m(scores)
     preds[preds >= args.threshold] = 1
     preds[preds < args.threshold] = 0
@@ -90,7 +90,7 @@ def evaluate_vigat(model, dataset, loader, device):
     showCM(cms)
 
 def evaluate_gate(model_gate, model_cls, model_vigat_local, model_vigat_global, dataset, loader, scores, class_of_video, class_vids, device):
-    print('**********Gate**********')
+    print('____________________Gate____________________')
     t0 = time.perf_counter()
 
     gidx = 0
@@ -151,7 +151,7 @@ def evaluate_gate(model_gate, model_cls, model_vigat_local, model_vigat_global, 
     t1 = time.perf_counter()
 
     # Change tensors to 1d-arrays
-    m = nn.Sigmoid(dim=1)
+    m = nn.Sigmoid()
     preds = m(scores)
     preds[preds >= args.threshold] = 1
     preds[preds < args.threshold] = 0

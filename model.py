@@ -66,37 +66,39 @@ class ModelGCNConcAfter(nn.Module):
     def __init__(self, gcn_layers, num_feats, num_class):
         super().__init__()
         self.graph = GraphModule(gcn_layers, num_feats)
-        self.cls = ClassifierSimple(2 * num_feats, num_feats, num_class)
+        self.graph_omega = GraphModule(gcn_layers, num_feats)
+        self.cls = ClassifierSimple(2*num_feats, num_feats, num_class)
 
-    def forward(self, feats, feat_global, get_adj=False):
+    def forward(self, feats, feats_global, get_adj=False):
         N, FR, B, NF = feats.shape
         feats = feats.view(N * FR, B, NF)
+        
         if get_adj is False:
             x = self.graph(feats)
-            x = x.view(N, FR, -1)
-            x = self.graph(x)
-            y = self.graph(feat_global)
+            x = x.view(N, FR, NF)
+            x = self.graph_omega(x)
+            y = self.graph_omega(feats_global)
             x = torch.cat([x, y], dim=-1)
             x = self.cls(x)
             return x
-        else:
-            x, adjobj = self.graph(feats, get_adj)
-            adjobj = adjobj.cpu()
-            wids_objects = adjobj.numpy().sum(axis=1)
-            x = x.view(N, FR, -1)
+        
+        x, adjobj = self.graph(feats, get_adj)
+        adjobj = adjobj.cpu()
+        wids_objects = adjobj.numpy().sum(axis=1)
+        x = x.view(N, FR, NF)
 
-            x, adjframelocal = self.graph(x, get_adj)
-            adjframelocal = adjframelocal.cpu()
-            wids_frame_local = adjframelocal.numpy().sum(axis=1)
+        x, adjframelocal = self.graph_omega(x, get_adj)
+        adjframelocal = adjframelocal.cpu()
+        wids_frame_local = adjframelocal.numpy().sum(axis=1)
 
-            y, adjframeglobal = self.graph(feat_global, get_adj)
-            adjframeglobal = adjframeglobal.cpu()
-            wids_frame_global = adjframeglobal.numpy().sum(axis=1)
+        y, adjframeglobal = self.graph_omega(feats_global, get_adj)
+        adjframeglobal = adjframeglobal.cpu()
+        wids_frame_global = adjframeglobal.numpy().sum(axis=1)
 
-            x = torch.cat([x, y], dim=-1)
-            x = self.cls(x)
+        x = torch.cat([x, y], dim=-1)
+        x = self.cls(x)
 
-            return x, wids_objects, wids_frame_local, wids_frame_global
+        return x, wids_objects, wids_frame_local, wids_frame_global
 
 
 class ModelGCNConcAfterGlobalOnly(nn.Module):

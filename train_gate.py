@@ -125,7 +125,7 @@ def evaluate_frame(model_cls, model_gate, model_vigat_local, model_vigat_global,
     model_gate.eval()
     with torch.no_grad():
         epoch_loss = 0
-        for feats, feat_global, label in loader:
+        for feats, feat_global, label, _ in loader:
             feats = feats.to(device)
             feat_global = feat_global.to(device)
             label = label.to(device)
@@ -189,9 +189,7 @@ def main():
 
     if args.dataset == 'cufed':
         train_dataset = CUFED(args.dataset_root, feats_dir=args.feats_dir, split_dir=args.split_dir)
-        val_dataset = CUFED(args.dataset_root, feats_dir=args.feats_dir, split_dir=args.split_dir, is_val=True)
-        crit = nn.BCEWithLogitsLoss(reduction='none')
-        crit_gate = nn.BCEWithLogitsLoss()
+        val_dataset = CUFED(args.dataset_root, feats_dir=args.feats_dir, split_dir=args.split_dir, is_train=False)
     else:
         sys.exit("Unknown dataset!")
 
@@ -207,9 +205,12 @@ def main():
     start_epoch = 0
     # Gate Model
     model_gate = Model_Gate(args.gcn_layers, train_dataset.NUM_FEATS, num_gates=args.cls_number).to(device)
+    crit = nn.BCEWithLogitsLoss(reduction='none')
+    crit_gate = nn.BCEWithLogitsLoss()
     opt = optim.Adam(model_gate.parameters(), lr=args.lr)
     sched = optim.lr_scheduler.MultiStepLR(opt, milestones=args.milestones)
     early_stopper = EarlyStopper(patience=args.patience, min_delta=args.min_delta, stopping_threshold=args.stopping_threshold)
+    
     data_vigat = torch.load(args.vigat_model[0])
     # Classifier Model
     model_cls = Model_Cls(args.gcn_layers, train_dataset.NUM_FEATS, train_dataset.NUM_CLASS).to(device)
