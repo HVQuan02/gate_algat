@@ -28,15 +28,14 @@ class CUFED(Dataset):
     def __init__(self, root_dir, feats_dir, split_dir, is_train=True):
         self.root_dir = root_dir
         self.feats_dir = feats_dir
+        self.local_folder = 'clip_local'
+        self.global_folder = 'clip_global'
         
         if is_train:
             self.phase = 'train'
         else:
             self.phase = 'test'
             
-        self.local_folder = 'clip_local'
-        self.global_folder = 'clip_global'
-
         if self.phase == 'train':
             split_path = os.path.join(split_dir, 'train_split.txt')
         else:
