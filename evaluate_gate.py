@@ -21,7 +21,7 @@ args = TestOptions().parse()
 
 
 def evaluate_algat(model, dataset, loader, device):
-    print('____________________ViGAT____________________')
+    print('__________________________________________________ViGAT__________________________________________________')
     t0 = time.perf_counter()
 
     gidx = 0
@@ -67,7 +67,7 @@ def evaluate_algat(model, dataset, loader, device):
     showCM(cms)
 
 def evaluate_gate(model_gate, model_cls, model_vigat_local, model_vigat_global, dataset, loader, scores, class_of_video, class_vids, device):
-    print('____________________Gate____________________')
+    print('__________________________________________________Gate__________________________________________________')
     gidx = 0
     class_selected = 0
     t0 = time.perf_counter()

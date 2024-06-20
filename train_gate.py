@@ -9,7 +9,7 @@ import torch.optim as optim
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from sklearn.preprocessing import MinMaxScaler
-from options.training_options import TrainOptions
+from options.train_options import TrainOptions
 from model import ExitingGatesGATCNN as Model_Gate
 from model import ModelGCNConcAfterClassifier as Model_Cls
 from model import ModelGCNConcAfterLocalFrame as Model_Basic_Local
