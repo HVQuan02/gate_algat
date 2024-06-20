@@ -107,11 +107,9 @@ class ModelGCNConcAfterGlobalOnly(nn.Module):
         self.graph = GraphModule(gcn_layers, num_feats)
         self.cls = ClassifierSimple(num_feats, int(num_feats/2), num_class)
 
-    def forward(self, feat_global): #(,feats,)
-
+    def forward(self, feat_global):
         x = self.graph(feat_global)
         x = self.cls(x)
-
         return x
 
 
@@ -144,7 +142,6 @@ class ModelGATPolicyDeterministic(nn.Module):
         adjframeglobal = adjframeglobal.cpu()
         wids_frame_global = adjframeglobal.detach().numpy().sum(axis=1)
         # y = self.cls(y, device)
-
         return wids_frame_global
 
 
@@ -174,7 +171,6 @@ class ModelTotalGATPolicy(nn.Module):
         mask = gumbel_sigmoid(logits=torch.log(wids_frame_global), temperature=temp, thresh=gs_thresh, hard=True)
         # Index Selection
         kept_feats = feats * mask.unsqueeze(-1).unsqueeze(-1)
-
         out_data = self.vigat(kept_feats, feat_global)
         return out_data, mask
 
@@ -196,7 +192,6 @@ class ModelTotalGATPolicyHead(nn.Module):
         mask = gumbel_sigmoid(logits=wids_frame_global, temperature=temp, thresh=gs_thresh, hard=True)
         # Index Selection
         kept_feats = feats * mask.unsqueeze(-1).unsqueeze(-1)
-
         out_data = self.vigat(kept_feats, feat_global)
         return out_data, mask
 
@@ -271,7 +266,6 @@ class ExitingGate(nn.Module):
         out = self.sigmoid(out)
         # out[out >= 0.5] = 1
         # out[out < 0.5] = 0
-
         return out
 
 
@@ -299,7 +293,6 @@ class ExitingGateGAT(nn.Module):
         y = self.graph(feat)
         x = self.cls(y)
         out = self.sigmoid(x)
-
         return out
 
 
@@ -353,7 +346,6 @@ class ExitingGateGATCNN(nn.Module):
         y = self.graph(feat)
         x = self.cls(y)
         out = self.sigmoid(x)
-
         return out
 
 
@@ -385,7 +377,6 @@ class ModelGCNConcAfterGlobalFrame(nn.Module):
             y, adjframeglobal = self.graph_omega(feat_global, get_adj)
             adjframeglobal = adjframeglobal.cpu()
             wids_frame_global = adjframeglobal.detach().numpy().sum(axis=1)
-
             return y, wids_frame_global
 
 

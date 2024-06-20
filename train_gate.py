@@ -1,44 +1,22 @@
-import argparse
-import time
 import os
 import sys
+import time
 import torch
+import numpy as np
 import torch.nn as nn
+from dataset import CUFED
 import torch.optim as optim
 import torch.nn.functional as F
-from sklearn.preprocessing import MinMaxScaler
 from torch.utils.data import DataLoader
-import numpy as np
-from datasets import CUFED
+from sklearn.preprocessing import MinMaxScaler
+from options.training_options import TrainOptions
+from model import ExitingGatesGATCNN as Model_Gate
+from model import ModelGCNConcAfterClassifier as Model_Cls
 from model import ModelGCNConcAfterLocalFrame as Model_Basic_Local
 from model import ModelGCNConcAfterGlobalFrame as Model_Basic_Global
-from model import ModelGCNConcAfterClassifier as Model_Cls
-from model import ExitingGatesGATCNN as Model_Gate
 
-parser = argparse.ArgumentParser(description='GCN Album Classification')
-parser.add_argument('--seed', type=int, default=2024, help='seed for randomness')
-parser.add_argument('vigat_model', nargs=1, help='Frame trained model')
-parser.add_argument('--gcn_layers', type=int, default=2, help='number of gcn layers')
-parser.add_argument('--dataset', default='cufed', choices=['cufed', 'pec'])
-parser.add_argument('--dataset_root', default='/kaggle/input/thesis-cufed/CUFED', help='dataset root directory')
-parser.add_argument('--feats_dir', default='/kaggle/input/mask-cufed-feats', help='global and local features directory')
-parser.add_argument('--split_dir', default='/kaggle/input/cufed-full-split', help='train split and val split')
-parser.add_argument('--lr', type=float, default=1e-4, help='initial learning rate')
-parser.add_argument('--milestones', nargs="+", type=int, default=[16, 35], help='milestones of learning decay')
-parser.add_argument('--num_epochs', type=int, default=40, help='number of epochs to train')
-parser.add_argument('--batch_size', type=int, default=64, help='batch size')
-parser.add_argument('--num_workers', type=int, default=4, help='number of workers for data loader')
-parser.add_argument('--resume', default=None, help='checkpoint to resume training')
-parser.add_argument('--save_dir', default='/kaggle/working/weights', help='directory to save checkpoints')
-parser.add_argument('--cls_number', type=int, default=5, help='number of classifiers')
-parser.add_argument('--t_step', nargs="+", type=int, default=[3, 5, 7, 9, 13], help='Classifier frames')
-parser.add_argument('--t_array', nargs="+", type=int, default=[1, 2, 3, 4, 5], help='e_t calculation')
-parser.add_argument('--beta', type=float, default=1e-6, help='Multiplier of gating loss schedule')
-parser.add_argument('--patience', type=int, default=20, help='patience of early stopping')
-parser.add_argument('--min_delta', type=float, default=1e-3, help='min delta of early stopping')
-parser.add_argument('--stopping_threshold', type=float, default=0.01, help='stopping threshold of val loss for early stopping')
-parser.add_argument('-v', '--verbose', action='store_true', help='show details')
-args = parser.parse_args()
+args = TrainOptions().parse()
+
 
 class EarlyStopper:
     def __init__(self, patience, min_delta, stopping_threshold):
@@ -48,31 +26,33 @@ class EarlyStopper:
         self.min_val_loss = float('inf')
         self.stopping_threshold = stopping_threshold
 
-    def early_stop(self, validation_mAP):
-        if validation_mAP <= self.stopping_threshold:
+    def early_stop(self, val_loss):
+        if val_loss <= self.stopping_threshold:
             return True, True
-        if validation_mAP < self.min_val_loss:
-            self.min_val_loss = validation_mAP
+        if val_loss < self.min_val_loss:
+            self.min_val_loss = val_loss
             self.counter = 0
             return False, True
-        if validation_mAP > (self.min_val_loss - self.min_delta):
+        if val_loss > (self.min_val_loss - self.min_delta):
             self.counter += 1
             if self.counter > self.patience:
                 return True, False
         return False, False
 
+
 def train_frame(model_cls, model_gate, model_vigat_local, model_vigat_global, dataset, loader, crit, crit_gate, opt, sched, device):
     model_gate.train()
     epoch_loss = 0
-    for feats, feat_global, label in loader:
-        feats = feats.to(device)
-        feat_global = feat_global.to(device)
+    for batch in loader:
+        feats_local, feats_global, label = batch
+        feats_local = feats_local.to(device)
+        feats_global = feats_global.to(device)
         label = label.to(device)
 
-        feat_global_single, wids_frame_global = model_vigat_global(feat_global, get_adj=True)
+        feat_global_single, wids_frame_global = model_vigat_global(feats_global, get_adj=True)
 
         # Cosine Similarity
-        normalized_global_feats = F.normalize(feat_global, dim=2)
+        normalized_global_feats = F.normalize(feats_global, dim=2)
         squared_euclidian_dist = torch.square(torch.cdist(normalized_global_feats, normalized_global_feats))
         cosine_disimilarity = (squared_euclidian_dist / 4.0)
         index_bestframes = np.argsort(wids_frame_global, axis=1)[:, -1:]
@@ -98,16 +78,13 @@ def train_frame(model_cls, model_gate, model_vigat_local, model_vigat_global, da
 
         for t in range(args.cls_number):
             indexes = index_bestframes[:, :args.t_step[t]].to(device)
-            feats_bestframes = feats.gather(dim=1, index=indexes.unsqueeze(-1).unsqueeze(-1)
+            feats_bestframes = feats_local.gather(dim=1, index=indexes.unsqueeze(-1).unsqueeze(-1)
                                             .expand(-1, -1, dataset.NUM_BOXES, dataset.NUM_FEATS)).to(device)
             feat_local_single = model_vigat_local(feats_bestframes)
             feat_single_cls = torch.cat([feat_local_single, feat_global_single], dim=-1)
             feat_gate = torch.cat((feat_gate, feat_local_single.unsqueeze(dim=1)), dim=1)
             out_data = model_cls(feat_single_cls)
-            if args.dataset != 'cufed':
-                loss_t = crit(out_data, label)
-            else:
-                loss_t = crit(out_data, label).mean(dim=-1)
+            loss_t = crit(out_data, label).mean(dim=-1)
             e_t = args.beta * torch.exp(torch.tensor(args.t_array[t])/2.)
             labels_gate = loss_t < e_t
             out_data_gate = model_gate(feat_gate.to(device), t)
@@ -121,19 +98,21 @@ def train_frame(model_cls, model_gate, model_vigat_local, model_vigat_global, da
     sched.step()
     return epoch_loss / len(loader)
 
+
 def evaluate_frame(model_cls, model_gate, model_vigat_local, model_vigat_global, dataset, loader, crit, crit_gate, device):
     model_gate.eval()
     with torch.no_grad():
         epoch_loss = 0
-        for feats, feat_global, label, _ in loader:
-            feats = feats.to(device)
-            feat_global = feat_global.to(device)
+        for batch in loader:
+            feats_local, feats_global, label, _ = batch
+            feats_local = feats_local.to(device)
+            feats_global = feats_global.to(device)
             label = label.to(device)
 
-            feat_global_single, wids_frame_global = model_vigat_global(feat_global, get_adj=True)
+            feat_global_single, wids_frame_global = model_vigat_global(feats_global, get_adj=True)
 
             # Cosine Similarity
-            normalized_global_feats = F.normalize(feat_global, dim=2)
+            normalized_global_feats = F.normalize(feats_global, dim=2)
             squared_euclidian_dist = torch.square(torch.cdist(normalized_global_feats, normalized_global_feats))
             cosine_disimilarity = (squared_euclidian_dist / 4.0)
             index_bestframes = np.argsort(wids_frame_global, axis=1)[:, -1:]
@@ -158,16 +137,13 @@ def evaluate_frame(model_cls, model_gate, model_vigat_local, model_vigat_global,
 
             for t in range(args.cls_number):
                 indexes = index_bestframes[:, :args.t_step[t]].to(device)
-                feats_bestframes = feats.gather(dim=1, index=indexes.unsqueeze(-1).unsqueeze(-1)
+                feats_bestframes = feats_local.gather(dim=1, index=indexes.unsqueeze(-1).unsqueeze(-1)
                                                 .expand(-1, -1, dataset.NUM_BOXES, dataset.NUM_FEATS)).to(device)
                 feat_local_single = model_vigat_local(feats_bestframes)
                 feat_single_cls = torch.cat([feat_local_single, feat_global_single], dim=-1)
                 feat_gate = torch.cat((feat_gate, feat_local_single.unsqueeze(dim=1)), dim=1)
                 out_data = model_cls(feat_single_cls)
-                if args.dataset != 'cufed':
-                    loss_t = crit(out_data, label)
-                else:
-                    loss_t = crit(out_data, label).mean(dim=-1)
+                loss_t = crit(out_data, label).mean(dim=-1)
                 e_t = args.beta * torch.exp(torch.tensor(args.t_array[t])/2.)
                 labels_gate = loss_t < e_t
                 out_data_gate = model_gate(feat_gate.to(device), t)
@@ -178,7 +154,10 @@ def evaluate_frame(model_cls, model_gate, model_vigat_local, model_vigat_global,
 
         return epoch_loss / len(loader)
 
+
 def main():
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
     if args.seed:
         np.random.seed(args.seed)
         torch.manual_seed(args.seed)
@@ -193,40 +172,51 @@ def main():
     else:
         sys.exit("Unknown dataset!")
 
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, num_workers=args.num_workers)
     val_loader = DataLoader(val_dataset, batch_size=args.batch_size, num_workers=args.num_workers)
 
     if args.verbose:
         print("running on {}".format(device))
-        print("train_set={}".format(len(train_dataset)))
-        print("val_set={}".format(len(val_dataset)))
+        print("train_set = {}".format(len(train_dataset)))
+        print("val_set = {}".format(len(val_dataset)))
 
-    start_epoch = 0
     # Gate Model
-    model_gate = Model_Gate(args.gcn_layers, train_dataset.NUM_FEATS, num_gates=args.cls_number).to(device)
+    model_gate = Model_Gate(args.gcn_layers, train_dataset.NUM_FEATS, num_gates=args.cls_number)
     crit = nn.BCEWithLogitsLoss(reduction='none')
     crit_gate = nn.BCEWithLogitsLoss()
     opt = optim.Adam(model_gate.parameters(), lr=args.lr)
     sched = optim.lr_scheduler.MultiStepLR(opt, milestones=args.milestones)
     early_stopper = EarlyStopper(patience=args.patience, min_delta=args.min_delta, stopping_threshold=args.stopping_threshold)
     
-    data_vigat = torch.load(args.vigat_model[0])
+    data_vigat = torch.load(args.vigat_model[0], map_location=device)
     # Classifier Model
-    model_cls = Model_Cls(args.gcn_layers, train_dataset.NUM_FEATS, train_dataset.NUM_CLASS).to(device)
-    model_cls.load_state_dict(data_vigat['model_state_dict'])
+    model_cls = Model_Cls(args.gcn_layers, train_dataset.NUM_FEATS, train_dataset.NUM_CLASS)
+    model_cls.load_state_dict(data_vigat['model_state_dict'], strict=True)
     model_cls.eval()
     # Vigat Model Local
-    model_vigat_local = Model_Basic_Local(args.gcn_layers, train_dataset.NUM_FEATS, train_dataset.NUM_CLASS).to(device)
-    model_vigat_local.load_state_dict(data_vigat['model_state_dict'])
+    model_vigat_local = Model_Basic_Local(args.gcn_layers, train_dataset.NUM_FEATS, train_dataset.NUM_CLASS)
+    model_vigat_local.load_state_dict(data_vigat['model_state_dict'], strict=True)
     model_vigat_local.eval()
     # Vigat Model Global
-    model_vigat_global = Model_Basic_Global(args.gcn_layers, train_dataset.NUM_FEATS, train_dataset.NUM_CLASS).to(device)
-    model_vigat_global.load_state_dict(data_vigat['model_state_dict'])
+    model_vigat_global = Model_Basic_Global(args.gcn_layers, train_dataset.NUM_FEATS, train_dataset.NUM_CLASS)
+    model_vigat_global.load_state_dict(data_vigat['model_state_dict'], strict=True)
     model_vigat_global.eval()
+
+    start_epoch = 0
+    if args.resume:
+        data = torch.load(args.resume, map_location=device)
+        start_epoch = data['epoch']
+        model_gate.load_state_dict(data['model_state_dict'], strict=True)
+        opt.load_state_dict(data['opt_state_dict'])
+        sched.load_state_dict(data['sched_state_dict'])
+        print("resuming from epoch {}".format(start_epoch))
 
     for epoch in range(start_epoch, args.num_epochs):
         epoch_cnt = epoch + 1
+        model_gate = model_gate.to(device)
+        model_cls = model_cls.to(device)
+        model_vigat_local = model_vigat_local.to(device)
+        model_vigat_global = model_vigat_global.to(device)
 
         t0 = time.perf_counter()
         train_loss = train_frame(model_cls, model_gate, model_vigat_local, model_vigat_global, train_dataset, train_loader, crit,
@@ -247,10 +237,10 @@ def main():
             'sched_state_dict': sched.state_dict()
         }
 
-        torch.save(model_config, os.path.join(args.save_dir, 'last-gate-{}.pt'.format(args.dataset)))
+        torch.save(model_config, os.path.join(args.save_dir, 'last_gate_{}.pt'.format(args.dataset)))
 
         if is_save_ckpt:
-            torch.save(model_config, os.path.join(args.save_dir, 'best-gate-{}.pt'.format(args.dataset)))
+            torch.save(model_config, os.path.join(args.save_dir, 'best_gate_{}.pt'.format(args.dataset)))
 
         if is_early_stopping:
             print('Stop at epoch {}'.format(epoch_cnt)) 
