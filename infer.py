@@ -41,10 +41,10 @@ def display_image(montage, tags, filename, path_dest):
     if not os.path.exists(path_dest):
         os.makedirs(path_dest)
     plt.figure()
-    plt.imshow(montage)
     plt.axis('off')
     plt.rcParams["axes.titlesize"] = 16
     plt.title(tags)
+    plt.imshow(montage)
     plt.savefig(os.path.join(path_dest, filename))
 
 
@@ -103,7 +103,8 @@ def infer_gate(model_gate, model_cls, model_vigat_local, model_vigat_global, dev
             indexes = index_bestframes[:, :args.t_step[t]].to(device)
             feats_bestframes = feats_local.gather(dim=1, index=indexes.unsqueeze(-1).unsqueeze(-1).
                                             expand(-1, -1, CUFED.NUM_BOXES, CUFED.NUM_FEATS)).to(device)
-            feat_local_single = model_vigat_local(feats_bestframes)
+            feat_local_single, wids_local = model_vigat_local(feats_bestframes, get_adj=True)
+            print(wids_local.shape) # expect (n_frames, 50)
             feat_single_cls = torch.cat([feat_local_single, feat_global_single], dim=-1)
             feat_gate = torch.cat((feat_gate, feat_local_single.unsqueeze(dim=1)), dim=1)
 
@@ -133,7 +134,7 @@ def infer_gate(model_gate, model_cls, model_vigat_local, model_vigat_global, dev
         cms = multilabel_confusion_matrix(labels_np, preds)
         cr = classification_report(labels_np, preds)
         
-        print('cls_frames={} map_micro={:.2f} map_macro={:.2f} accuracy={:.2f} dt={:.2f}sec'.format(n_frames, map_micro, map_macro, acc * 100, t1 - t0))
+        print('cls_frames={} map_micro={:.2f} map_macro={:.2f} accuracy={:.2f}'.format(n_frames, map_micro, map_macro, acc * 100))
         print(cr)
         showCM(cms)
 
