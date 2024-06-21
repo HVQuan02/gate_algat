@@ -17,25 +17,29 @@ from model import ModelGCNConcAfterClassifier as Model_Cls
 from model import ModelGCNConcAfterLocalFrame as Model_Basic_Local
 from model import ModelGCNConcAfterGlobalFrame as Model_Basic_Global
 from sklearn.metrics import accuracy_score, multilabel_confusion_matrix, classification_report
+import cv2
+import pickle
+import math
 
 args = InferOptions().parse()
 
 
+album_imgs_path = os.path.join(args.split_dir, "album_imgs_mask.json")
+with open(album_imgs_path, 'r') as f:
+    album_imgs = json.load(f)
+imgs_path = album_imgs[args.album_path.split('/')[-1]]
+imgs_path_np = np.array([os.path.join(args.album_path, img_path) for img_path in imgs_path])
+
 def get_album(args):
-    album_imgs_path = os.path.join(args.split_dir, "album_imgs.json")
-    with open(album_imgs_path, 'r') as f:
-        album_imgs = json.load(f)
-    imgs_path = album_imgs[args.album_path.split('/')[-1]]
     tensor_batch = torch.zeros(len(imgs_path), args.input_size, args.input_size, 3)
-    for i, img_path in enumerate(imgs_path):
-        im = Image.open(os.path.join(args.album_path, img_path))
+    for i, img_path in enumerate(imgs_path_np):
+        im = Image.open(img_path)
         im_resize = im.resize((args.input_size, args.input_size))
         np_img = np.array(im_resize, dtype=np.uint8)
         tensor_batch[i] = torch.from_numpy(np_img).float() / 255.0
     tensor_batch = tensor_batch.permute(0, 3, 1, 2)   # HWC to CHW
     montage = make_grid(tensor_batch).permute(1, 2, 0).cpu()
     return tensor_batch, montage
-
 
 def display_image(montage, tags, filename, path_dest):
     if not os.path.exists(path_dest):
@@ -103,8 +107,7 @@ def infer_gate(model_gate, model_cls, model_vigat_local, model_vigat_global, dev
             indexes = index_bestframes[:, :args.t_step[t]].to(device)
             feats_bestframes = feats_local.gather(dim=1, index=indexes.unsqueeze(-1).unsqueeze(-1).
                                             expand(-1, -1, CUFED.NUM_BOXES, CUFED.NUM_FEATS)).to(device)
-            feat_local_single, wids_local = model_vigat_local(feats_bestframes, get_adj=True)
-            print(wids_local.shape) # expect (n_frames, 50)
+            feat_local_single, wids_objects, _ = model_vigat_local(feats_bestframes, get_adj=True)
             feat_single_cls = torch.cat([feat_local_single, feat_global_single], dim=-1)
             feat_gate = torch.cat((feat_gate, feat_local_single.unsqueeze(dim=1)), dim=1)
 
@@ -116,10 +119,33 @@ def infer_gate(model_gate, model_cls, model_vigat_local, model_vigat_global, dev
             if exit_switch or t == (args.cls_number - 1):
                 break
 
-        n_frames = args.t_step[class_selected]
-        top_indexes = index_bestframes[0, :n_frames]
+        n_salient_frames = args.t_step[class_selected]
+        top_indexes = index_bestframes[0, :n_salient_frames]
         scores = out_data.cpu()
 
+        selected_top_indexes = index_bestframes[0, :args.n_frames] # n_frames <= n_salient_frames
+        top_imgs_path = imgs_path_np[selected_top_indexes]
+        top_obj_idx = np.argsort(wids_objects[selected_top_indexes], axis=1)[-args.n_objects:]
+        with open(args.detic_path, 'rb') as f:
+            detic_model = pickle.load(f)
+        with open(args.metadata_path, 'rb') as f:
+            metadata = pickle.load(f)
+        detected_imgs = []
+        for img_path in top_imgs_path:
+            im = cv2.imread(img_path)
+            output = detic_model(im)
+            boxes = output['instances'][top_obj_idx].pred_boxes.tensor.cpu()
+            classes = [metadata.thing_classes[x] for x in output["instances"][top_obj_idx].pred_classes.cpu().tolist()]
+            for i, box in enumerate(boxes):
+                x1, y1, x2, y2 = [cord.item() for cord in box]
+                x, y = math.floor(x1), math.floor(y1)
+                w, h = math.floor(x2 - x1 + 1), math.floor(y2 - y1 + 1)
+                cv2.rectangle(im, (x, y), (x + w, y + h), (255, 0, 0), 1)
+                cv2.putText(im, classes[i], (int(x + w / 2), int(y + h / 2)), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (36, 255, 12), 1)
+            im_resize = im.resize((args.input_size, args.input_size))
+            detected_imgs.append(im_resize)
+        detected_montage = make_grid(detected_imgs).cpu()
+           
     # Change tensors to 1d-arrays
     m = nn.Sigmoid()
     preds = m(scores)
@@ -134,7 +160,7 @@ def infer_gate(model_gate, model_cls, model_vigat_local, model_vigat_global, dev
         cms = multilabel_confusion_matrix(labels_np, preds)
         cr = classification_report(labels_np, preds)
         
-        print('cls_frames={} map_micro={:.2f} map_macro={:.2f} accuracy={:.2f}'.format(n_frames, map_micro, map_macro, acc * 100))
+        print('cls_frames={} map_micro={:.2f} map_macro={:.2f} accuracy={:.2f}'.format(n_salient_frames, map_micro, map_macro, acc * 100))
         print(cr)
         showCM(cms)
 
@@ -142,7 +168,8 @@ def infer_gate(model_gate, model_cls, model_vigat_local, model_vigat_global, dev
         filtered_tensor = torch.index_select(album_tensor, dim=0, index=top_indexes)
         top_montage = make_grid(filtered_tensor).permute(1, 2, 0).cpu()
         display_image(montage, np.array(CUFED.event_labels)[list(map(bool,preds.squeeze(0)))], 'montage.jpg', output_path)
-        display_image(top_montage, '{} salient frames'.format(n_frames), 'salient_montage.jpg', output_path)
+        display_image(top_montage, 'all {} salient frames'.format(n_salient_frames), 'salient_montage.jpg', output_path)
+        display_image(detected_montage, '{} salient frames'.format(args.n_frames), 'detected_montage.jpg', output_path)
 
 
 def main():

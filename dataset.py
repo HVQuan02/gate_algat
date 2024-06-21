@@ -63,7 +63,7 @@ class CUFED(Dataset):
             with open(importance_path, 'r') as f:
                 album_importance = json.load(f)
 
-            album_imgs_path = os.path.join(split_dir, "album_imgs.json")
+            album_imgs_path = os.path.join(split_dir, "album_imgs_mask.json")
             with open(album_imgs_path, 'r') as f:
                 album_imgs = json.load(f)
                 
