@@ -1,23 +1,22 @@
-import time
+import os
+import json
 import torch
 import numpy as np
+from PIL import Image
 import torch.nn as nn
 from dataset import CUFED
 import torch.nn.functional as F
-from options.infer_options import InferOptions
+import matplotlib.pyplot as plt
+from utils import AP_partial, showCM
+from torchvision.utils import make_grid
 from model import ModelGCNConcAfter as Model
 from sklearn.preprocessing import MinMaxScaler
+from options.infer_options import InferOptions
 from model import ExitingGatesGATCNN as Model_Gate
-from utils import AP_partial, showCM
 from model import ModelGCNConcAfterClassifier as Model_Cls
 from model import ModelGCNConcAfterLocalFrame as Model_Basic_Local
 from model import ModelGCNConcAfterGlobalFrame as Model_Basic_Global
 from sklearn.metrics import accuracy_score, multilabel_confusion_matrix, classification_report
-import os
-import json
-from PIL import Image
-import matplotlib.pyplot as plt
-from torchvision.utils import make_grid
 
 args = InferOptions().parse()
 
@@ -35,7 +34,6 @@ def get_album(args):
         tensor_batch[i] = torch.from_numpy(np_img).float() / 255.0
     tensor_batch = tensor_batch.permute(0, 3, 1, 2)   # HWC to CHW
     montage = make_grid(tensor_batch).permute(1, 2, 0).cpu()
-    # tensor_batch = torch.unsqueeze(tensor_batch, 0)
     return tensor_batch, montage
 
 
@@ -58,7 +56,6 @@ def infer_gate(model_gate, model_cls, model_vigat_local, model_vigat_global, dev
     output_path = os.path.join(args.path_output, album_path)
 
     class_selected = 0
-    t0 = time.perf_counter()
     local_folder = 'clip_local'
     global_folder = 'clip_global'
 
@@ -129,7 +126,6 @@ def infer_gate(model_gate, model_cls, model_vigat_local, model_vigat_global, dev
     preds[preds < args.threshold] = 0
     preds = preds.numpy()
     scores = scores.numpy()
-    t1 = time.perf_counter()
 
     if args.dataset == 'cufed':
         map_micro, map_macro = AP_partial(labels_np, scores)[1:3]
@@ -144,8 +140,9 @@ def infer_gate(model_gate, model_cls, model_vigat_local, model_vigat_global, dev
         album_tensor, montage = get_album(args)
         filtered_tensor = torch.index_select(album_tensor, dim=0, index=top_indexes)
         top_montage = make_grid(filtered_tensor).permute(1, 2, 0).cpu()
-        display_image(montage, np.array(CUFED.event_labels)[preds], 'montage.jpg', output_path)
-        display_image(top_montage, 'salient_frames', 'salient_montage.jpg', output_path)
+        display_image(montage, np.array(CUFED.event_labels)[list(map(bool,preds.squeeze(0)))], 'montage.jpg', output_path)
+        display_image(top_montage, '{} salient frames'.format(n_frames), 'salient_montage.jpg', output_path)
+
 
 def main():
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
