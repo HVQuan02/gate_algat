@@ -4,7 +4,7 @@ import numpy as np
 import torch.nn as nn
 from dataset import CUFED
 import torch.nn.functional as F
-from options.test_options import TestOptions
+from options.infer_options import InferOptions
 from model import ModelGCNConcAfter as Model
 from sklearn.preprocessing import MinMaxScaler
 from model import ExitingGatesGATCNN as Model_Gate
@@ -19,7 +19,8 @@ from PIL import Image
 import matplotlib.pyplot as plt
 from torchvision.utils import make_grid
 
-args = TestOptions().parse()
+args = InferOptions().parse()
+
 
 def get_album(args):
     album_imgs_path = os.path.join(args.split_dir, "album_imgs.json")
@@ -62,21 +63,19 @@ def infer_gate(model_gate, model_cls, model_vigat_local, model_vigat_global, dev
     global_folder = 'clip_global'
 
     with torch.no_grad():
-        label_path = os.path.join(args.root_dir, "event_type.json")
+        label_path = os.path.join(args.dataset_root, "event_type.json")
         with open(label_path, 'r') as f:
           album_data = json.load(f)
-        labels_np = np.zeros(CUFED.NUM_CLASS, dtype=np.float32)
+        labels_np = np.zeros((1, CUFED.NUM_CLASS), dtype=np.float32)
         for lbl in album_data[album_name]:
             idx = CUFED.event_labels.index(lbl)
-            labels_np[idx] = 1
+            labels_np[0, idx] = 1
 
         local_path = os.path.join(args.feats_dir, local_folder, album_name + '.npy')
         global_path = os.path.join(args.feats_dir, global_folder, album_name + '.npy')
-        feats_local = np.load(local_path).unsqueeze(0)
-        feats_global = np.load(global_path).unsqueeze(0)
+        feats_local = torch.from_numpy(np.expand_dims(np.load(local_path), 0)).to(device)
+        feats_global = torch.from_numpy(np.expand_dims(np.load(global_path), 0)).to(device)
 
-        feats_local = feats_local.to(device)
-        feats_global = feats_global.to(device)
         feat_global_single, wids_frame_global = model_vigat_global(feats_global, get_adj=True)
 
         # Cosine Similarity
