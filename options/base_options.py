@@ -15,7 +15,7 @@ class BaseOptions():
         parser.add_argument('--split_dir', default='/kaggle/input/cufed-full-split', help='train split and val split')
         parser.add_argument('--save_dir', default='weights', help='directory to save checkpoints')
         parser.add_argument('--num_workers', type=int, default=4, help='number of workers for data loader')
-        parser.add_argument('--t_step', nargs="+", type=int, default=[3, 5, 7, 9, 13], help='Classifier frames')
+        parser.add_argument('--t_step', nargs="+", type=int, default=[11, 12, 13, 14, 15, 20, 25], help='Classifier frames')
         parser.add_argument('--input_size', type=int, default=224, help='expected input image size')
         parser.add_argument('--threshold', type=float, default=0.75, help='threshold for logits to labels')
         parser.add_argument('-v', '--verbose', action='store_true', help='show details')

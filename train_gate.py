@@ -86,7 +86,7 @@ def train_frame(model_cls, model_gate, model_vigat_local, model_vigat_global, da
             feat_gate = torch.cat((feat_gate, feat_local_single.unsqueeze(dim=1)), dim=1)
             out_data = model_cls(feat_single_cls)
             loss_t = crit(out_data, label).mean(dim=-1)
-            e_t = args.beta * torch.exp(torch.tensor(t_array[t])/2.)
+            e_t = args.beta * torch.exp(torch.tensor(t_array[t]) / 2.)
             labels_gate = loss_t < e_t
             out_data_gate = model_gate(feat_gate.to(device), t)
             loss_gate += crit_gate(out_data_gate, torch.Tensor.float(labels_gate).unsqueeze(dim=1))
