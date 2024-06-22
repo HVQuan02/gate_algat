@@ -16,7 +16,7 @@ from model import ModelGCNConcAfterLocalFrame as Model_Basic_Local
 from model import ModelGCNConcAfterGlobalFrame as Model_Basic_Global
 
 args = TrainOptions().parse()
-
+cls_number = len(args.t_step)
 
 class EarlyStopper:
     def __init__(self, patience, min_delta, stopping_threshold):
@@ -76,7 +76,7 @@ def train_frame(model_cls, model_gate, model_vigat_local, model_vigat_global, da
         feat_gate = feat_gate.unsqueeze(dim=1)
         loss_gate = 0.
 
-        for t in range(args.cls_number):
+        for t in range(cls_number):
             indexes = index_bestframes[:, :args.t_step[t]].to(device)
             feats_bestframes = feats_local.gather(dim=1, index=indexes.unsqueeze(-1).unsqueeze(-1)
                                             .expand(-1, -1, dataset.NUM_BOXES, dataset.NUM_FEATS)).to(device)
@@ -90,7 +90,7 @@ def train_frame(model_cls, model_gate, model_vigat_local, model_vigat_global, da
             out_data_gate = model_gate(feat_gate.to(device), t)
             loss_gate += crit_gate(out_data_gate, torch.Tensor.float(labels_gate).unsqueeze(dim=1))
 
-        loss_gate = loss_gate / args.cls_number
+        loss_gate = loss_gate / cls_number
         loss_gate.backward()
         opt.step()
         epoch_loss += loss_gate.item()
@@ -135,7 +135,7 @@ def evaluate_frame(model_cls, model_gate, model_vigat_local, model_vigat_global,
             feat_gate = feat_gate.unsqueeze(dim=1)
             loss_gate = 0.
 
-            for t in range(args.cls_number):
+            for t in range(cls_number):
                 indexes = index_bestframes[:, :args.t_step[t]].to(device)
                 feats_bestframes = feats_local.gather(dim=1, index=indexes.unsqueeze(-1).unsqueeze(-1)
                                                 .expand(-1, -1, dataset.NUM_BOXES, dataset.NUM_FEATS)).to(device)
@@ -149,7 +149,7 @@ def evaluate_frame(model_cls, model_gate, model_vigat_local, model_vigat_global,
                 out_data_gate = model_gate(feat_gate.to(device), t)
                 loss_gate += crit_gate(out_data_gate, torch.Tensor.float(labels_gate).unsqueeze(dim=1))
 
-            loss_gate = loss_gate / args.cls_number
+            loss_gate = loss_gate / cls_number
             epoch_loss += loss_gate.item()
 
         return epoch_loss / len(loader)
@@ -181,7 +181,7 @@ def main():
         print("val_set = {}".format(len(val_dataset)))
 
     # Gate Model
-    model_gate = Model_Gate(args.gcn_layers, train_dataset.NUM_FEATS, num_gates=args.cls_number)
+    model_gate = Model_Gate(args.gcn_layers, train_dataset.NUM_FEATS, num_gates=cls_number)
     crit = nn.BCEWithLogitsLoss(reduction='none')
     crit_gate = nn.BCEWithLogitsLoss()
     opt = optim.Adam(model_gate.parameters(), lr=args.lr)

@@ -17,7 +17,7 @@ from model import ModelGCNConcAfterGlobalFrame as Model_Basic_Global
 from sklearn.metrics import accuracy_score, multilabel_confusion_matrix, classification_report
 
 args = TestOptions().parse()
-
+cls_number = len(args.t_step)
 
 def evaluate_algat(model, dataset, loader, device):
     print('__________________________________________________ViGAT__________________________________________________')
@@ -102,7 +102,7 @@ def evaluate_gate(model_gate, model_cls, model_vigat_local, model_vigat_global, 
             feat_gate = feat_global_single
             feat_gate = feat_gate.unsqueeze(dim=1)
 
-            for t in range(args.cls_number):
+            for t in range(cls_number):
                 indexes = index_bestframes[:, :args.t_step[t]].to(device)
                 feats_bestframes = feats_local.gather(dim=1, index=indexes.unsqueeze(-1).unsqueeze(-1).
                                                 expand(-1, -1, dataset.NUM_BOXES, dataset.NUM_FEATS)).to(device)
@@ -115,7 +115,7 @@ def evaluate_gate(model_gate, model_cls, model_vigat_local, model_vigat_global, 
                 out_data_gate = model_gate(feat_gate.to(device), t)
                 class_selected = t
                 exit_switch = out_data_gate >= 0.5
-                if exit_switch or t == (args.cls_number - 1):
+                if exit_switch or t == (cls_number - 1):
                     class_vids[t] += 1
                     break
 
@@ -143,11 +143,11 @@ def evaluate_gate(model_gate, model_cls, model_vigat_local, model_vigat_global, 
     if args.dataset == 'cufed':
         map_micro, map_macro = AP_partial(dataset.labels, scores)[1:3]
         acc = accuracy_score(dataset.labels, preds)
-        class_ap = np.zeros(args.cls_number)   
+        class_ap = np.zeros(cls_number)   
         cms = multilabel_confusion_matrix(dataset.labels, preds)
         cr = classification_report(dataset.labels, preds)
 
-        for t in range(args.cls_number):
+        for t in range(cls_number):
             if sum(class_of_video == t) == 0:
                 print('No Videos fetched by classifier {}'.format(t))
                 continue
@@ -163,7 +163,7 @@ def evaluate_gate(model_gate, model_cls, model_vigat_local, model_vigat_global, 
             # class_ap[t] = average_precision_score(dataset.labels[class_of_video == t, :],
             # scores[class_of_video == t, :], average='samples')
 
-        for t in range(args.cls_number):
+        for t in range(cls_number):
             print('classifier_{}: map={:.2f} cls_frames={}'.format(t, class_ap[t], args.t_step[t]))
         print('map_micro={:.2f} map_macro={:.2f} accuracy={:.2f} dt={:.2f}sec'.format(map_micro, map_macro, acc * 100, t1 - t0))
         print('Total Exits per Classifier: {}'.format(class_vids))
@@ -188,7 +188,7 @@ def main():
     data_gate = torch.load(args.gate_model[0], map_location=device)
     data_vigat = torch.load(args.vigat_model[0], map_location=device)
     # Gate Model
-    model_gate = Model_Gate(args.gcn_layers, dataset.NUM_FEATS, num_gates=args.cls_number)
+    model_gate = Model_Gate(args.gcn_layers, dataset.NUM_FEATS, num_gates=cls_number)
     model_gate.load_state_dict(data_gate['model_state_dict'])
     model_gate.eval()
     model_gate = model_gate.to(device)
@@ -216,7 +216,7 @@ def main():
     num_test = len(dataset)
     scores = torch.zeros((num_test, dataset.NUM_CLASS), dtype=torch.float32)
     class_of_video = torch.zeros(num_test, dtype=torch.int)
-    class_vids = torch.zeros(args.cls_number)
+    class_vids = torch.zeros(cls_number)
 
     evaluate_gate(model_gate, model_cls, model_vigat_local, model_vigat_global, dataset, loader, scores,
              class_of_video, class_vids, device)
