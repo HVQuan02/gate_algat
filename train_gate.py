@@ -17,6 +17,7 @@ from model import ModelGCNConcAfterGlobalFrame as Model_Basic_Global
 
 args = TrainOptions().parse()
 cls_number = len(args.t_step)
+t_array = [i for i in range(1, cls_number + 1)]
 
 class EarlyStopper:
     def __init__(self, patience, min_delta, stopping_threshold):
@@ -85,7 +86,7 @@ def train_frame(model_cls, model_gate, model_vigat_local, model_vigat_global, da
             feat_gate = torch.cat((feat_gate, feat_local_single.unsqueeze(dim=1)), dim=1)
             out_data = model_cls(feat_single_cls)
             loss_t = crit(out_data, label).mean(dim=-1)
-            e_t = args.beta * torch.exp(torch.tensor(args.t_array[t])/2.)
+            e_t = args.beta * torch.exp(torch.tensor(t_array[t])/2.)
             labels_gate = loss_t < e_t
             out_data_gate = model_gate(feat_gate.to(device), t)
             loss_gate += crit_gate(out_data_gate, torch.Tensor.float(labels_gate).unsqueeze(dim=1))
@@ -101,8 +102,8 @@ def train_frame(model_cls, model_gate, model_vigat_local, model_vigat_global, da
 
 def evaluate_frame(model_cls, model_gate, model_vigat_local, model_vigat_global, dataset, loader, crit, crit_gate, device):
     model_gate.eval()
+    epoch_loss = 0
     with torch.no_grad():
-        epoch_loss = 0
         for batch in loader:
             feats_local, feats_global, label, _ = batch
             feats_local = feats_local.to(device)
@@ -144,7 +145,7 @@ def evaluate_frame(model_cls, model_gate, model_vigat_local, model_vigat_global,
                 feat_gate = torch.cat((feat_gate, feat_local_single.unsqueeze(dim=1)), dim=1)
                 out_data = model_cls(feat_single_cls)
                 loss_t = crit(out_data, label).mean(dim=-1)
-                e_t = args.beta * torch.exp(torch.tensor(args.t_array[t])/2.)
+                e_t = args.beta * torch.exp(torch.tensor(t_array[t])/2.)
                 labels_gate = loss_t < e_t
                 out_data_gate = model_gate(feat_gate.to(device), t)
                 loss_gate += crit_gate(out_data_gate, torch.Tensor.float(labels_gate).unsqueeze(dim=1))

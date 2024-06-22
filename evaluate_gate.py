@@ -10,7 +10,7 @@ from options.test_options import TestOptions
 from model import ModelGCNConcAfter as Model
 from sklearn.preprocessing import MinMaxScaler
 from model import ExitingGatesGATCNN as Model_Gate
-from utils import AP_partial, spearman_correlation, showCM
+from utils import AP_partial, showCM
 from model import ModelGCNConcAfterClassifier as Model_Cls
 from model import ModelGCNConcAfterLocalFrame as Model_Basic_Local
 from model import ModelGCNConcAfterGlobalFrame as Model_Basic_Global
@@ -19,54 +19,7 @@ from sklearn.metrics import accuracy_score, multilabel_confusion_matrix, classif
 args = TestOptions().parse()
 cls_number = len(args.t_step)
 
-def evaluate_algat(model, dataset, loader, device):
-    print('__________________________________________________ViGAT__________________________________________________')
-    t0 = time.perf_counter()
-
-    gidx = 0
-    frame_wid_list = []
-    importance_list = []
-    scores = torch.zeros((len(dataset), dataset.NUM_CLASS), dtype=torch.float32)
-
-    with torch.no_grad():
-        for batch in loader:
-            feats_local, feats_global, _, importances = batch
-
-            # Run model with all frames
-            feats_local = feats_local.to(device)
-            feats_global = feats_global.to(device)
-            out_data, _, wids_frame_local, wids_frame_global = model(feats_local, feats_global, get_adj=True)
-
-            shape = out_data.shape[0]
-
-            scores[gidx:gidx+shape, :] = out_data.cpu()
-            gidx += shape
-            importance_list.append(importances)
-            avg_frame_wid = (wids_frame_local + wids_frame_global) / 2
-            frame_wid_list.append(torch.from_numpy(avg_frame_wid))
-    
-    m = nn.Sigmoid()
-    preds = m(scores)
-    preds[preds >= args.threshold] = 1
-    preds[preds < args.threshold] = 0
-    scores, preds = scores.numpy(), preds.numpy()
-
-    map_micro, map_macro = AP_partial(dataset.labels, scores)[1:3]
-    acc = accuracy_score(dataset.labels, preds)
-    cms = multilabel_confusion_matrix(dataset.labels, preds)
-    cr = classification_report(dataset.labels, preds)
-    
-    importance_matrix = torch.cat(importance_list).to(device)
-    wid_frame_matrix = torch.cat(frame_wid_list).to(device)
-    frame_spearman = spearman_correlation(wid_frame_matrix, importance_matrix)
-
-    t1 = time.perf_counter()
-    print('map_micro={:.2f} map_macro={:.2f} accuracy={:.2f} spearman={:.2f} dt={:.2f}sec'.format(map_micro, map_macro, acc * 100, frame_spearman, t1 - t0))
-    print(cr)
-    showCM(cms)
-
 def evaluate_gate(model_gate, model_cls, model_vigat_local, model_vigat_global, dataset, loader, scores, class_of_video, class_vids, device):
-    print('__________________________________________________Gate__________________________________________________')
     gidx = 0
     class_selected = 0
     t0 = time.perf_counter()
@@ -120,8 +73,8 @@ def evaluate_gate(model_gate, model_cls, model_vigat_local, model_vigat_global, 
                     break
 
             shape = out_data.shape[0]
-            class_of_video[gidx:gidx + shape] = class_selected
-            scores[gidx:gidx + shape, :] = out_data.cpu()
+            class_of_video[gidx:gidx+shape] = class_selected
+            scores[gidx:gidx+shape, :] = out_data.cpu()
             gidx += shape
 
     # Change tensors to 1d-arrays
@@ -189,7 +142,7 @@ def main():
     data_vigat = torch.load(args.vigat_model[0], map_location=device)
     # Gate Model
     model_gate = Model_Gate(args.gcn_layers, dataset.NUM_FEATS, num_gates=cls_number)
-    model_gate.load_state_dict(data_gate['model_state_dict'])
+    model_gate.load_state_dict(data_gate['model_state_dict'], strict=True)
     model_gate.eval()
     model_gate = model_gate.to(device)
     # Vigat Model
@@ -220,7 +173,6 @@ def main():
 
     evaluate_gate(model_gate, model_cls, model_vigat_local, model_vigat_global, dataset, loader, scores,
              class_of_video, class_vids, device)
-    evaluate_algat(model, dataset, loader, device)
 
 
 if __name__ == '__main__':
