@@ -78,6 +78,7 @@ def infer_gate(model_gate, model_cls, model_vigat_local, model_vigat_global, dev
         feats_global = torch.from_numpy(np.expand_dims(np.load(global_path), 0)).to(device)
 
         feat_global_single, wids_frame_global = model_vigat_global(feats_global, get_adj=True)
+        feat_global_single,  wids_objects, _ = model_vigat_local(feats_local, get_adj=True)
 
         # Cosine Similarity
         with torch.no_grad():
@@ -107,7 +108,7 @@ def infer_gate(model_gate, model_cls, model_vigat_local, model_vigat_global, dev
             indexes = index_bestframes[:, :args.t_step[t]].to(device)
             feats_bestframes = feats_local.gather(dim=1, index=indexes.unsqueeze(-1).unsqueeze(-1).
                                             expand(-1, -1, CUFED.NUM_BOXES, CUFED.NUM_FEATS)).to(device)
-            feat_local_single, wids_objects, _ = model_vigat_local(feats_bestframes, get_adj=True)
+            feat_local_single = model_vigat_local(feats_bestframes)
             feat_single_cls = torch.cat([feat_local_single, feat_global_single], dim=-1)
             feat_gate = torch.cat((feat_gate, feat_local_single.unsqueeze(dim=1)), dim=1)
 
@@ -131,11 +132,11 @@ def infer_gate(model_gate, model_cls, model_vigat_local, model_vigat_global, dev
         with open(args.metadata_path, 'rb') as f:
             metadata = pickle.load(f)
         detected_imgs = []
-        for img_path in top_imgs_path:
+        for i, img_path in enumerate(top_imgs_path):
             im = cv2.imread(img_path)
             output = detic_model(im)
-            boxes = output['instances'][top_obj_idx].pred_boxes.tensor.cpu()
-            classes = [metadata.thing_classes[x] for x in output["instances"][top_obj_idx].pred_classes.cpu().tolist()]
+            boxes = output['instances'][top_obj_idx[i]].pred_boxes.tensor.cpu()
+            classes = [metadata.thing_classes[x] for x in output["instances"][top_obj_idx[i]].pred_classes.cpu().tolist()]
             for i, box in enumerate(boxes):
                 x1, y1, x2, y2 = [cord.item() for cord in box]
                 x, y = math.floor(x1), math.floor(y1)
