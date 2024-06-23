@@ -11,11 +11,11 @@ class BaseOptions():
         parser.add_argument('--gcn_layers', type=int, default=2, help='number of gcn layers')
         parser.add_argument('--dataset', default='cufed', choices=['pec', 'cufed'])
         parser.add_argument('--dataset_root', default='/kaggle/input/thesis-cufed/CUFED', help='dataset root directory')
-        parser.add_argument('--feats_dir', default='/kaggle/input/mask-cufed-feats', help='global and local features directory')
+        parser.add_argument('--feats_dir', default='/kaggle/input/mask-cufed-feats-bb', help='global and local features directory')
         parser.add_argument('--split_dir', default='/kaggle/input/cufed-full-split', help='train split and val split')
         parser.add_argument('--save_dir', default='weights', help='directory to save checkpoints')
         parser.add_argument('--num_workers', type=int, default=4, help='number of workers for data loader')
-        parser.add_argument('--t_step', nargs="+", type=int, default=[11, 12, 13, 14, 15, 20, 25], help='Classifier frames')
+        parser.add_argument('--t_step', nargs="+", type=int, default=[11, 12, 13, 14, 15, 20, 25], help='Classifier frames') # change
         parser.add_argument('--input_size', type=int, default=224, help='expected input image size')
         parser.add_argument('--threshold', type=float, default=0.75, help='threshold for logits to labels')
         parser.add_argument('-v', '--verbose', action='store_true', help='show details')

@@ -19,6 +19,7 @@ args = TrainOptions().parse()
 cls_number = len(args.t_step)
 t_array = [i for i in range(1, cls_number + 1)]
 
+
 class EarlyStopper:
     def __init__(self, patience, min_delta, stopping_threshold):
         self.patience = patience
@@ -105,7 +106,7 @@ def evaluate_frame(model_cls, model_gate, model_vigat_local, model_vigat_global,
     epoch_loss = 0
     with torch.no_grad():
         for batch in loader:
-            feats_local, feats_global, label, _ = batch
+            feats_local, feats_global, label = batch
             feats_local = feats_local.to(device)
             feats_global = feats_global.to(device)
             label = label.to(device)

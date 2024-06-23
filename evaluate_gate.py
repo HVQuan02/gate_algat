@@ -1,5 +1,5 @@
 import sys
-import time
+import json
 import torch
 import numpy as np
 import torch.nn as nn
@@ -19,14 +19,17 @@ from sklearn.metrics import accuracy_score, multilabel_confusion_matrix, classif
 args = TestOptions().parse()
 cls_number = len(args.t_step)
 
+
 def evaluate_gate(model_gate, model_cls, model_vigat_local, model_vigat_global, dataset, loader, scores, class_of_video, class_vids, device):
     gidx = 0
     class_selected = 0
-    t0 = time.perf_counter()
+    album_frames = {}
+    for i in range(cls_number):
+        album_frames[i] = []
 
     with torch.no_grad():
-        for batch in loader:
-            feats_local, feats_global, _, _ = batch
+        for i, batch in enumerate(loader):
+            feats_local, feats_global, _ = batch
             feats_local = feats_local.to(device)
             feats_global = feats_global.to(device)
             feat_global_single, wids_frame_global = model_vigat_global(feats_global, get_adj=True)
@@ -70,12 +73,15 @@ def evaluate_gate(model_gate, model_cls, model_vigat_local, model_vigat_global, 
                 exit_switch = out_data_gate >= 0.5
                 if exit_switch or t == (cls_number - 1):
                     class_vids[t] += 1
+                    album_frames[t].append(dataset.videos[i])
                     break
-
             shape = out_data.shape[0]
             class_of_video[gidx:gidx+shape] = class_selected
             scores[gidx:gidx+shape, :] = out_data.cpu()
             gidx += shape
+
+    with open('/kaggle/working/album_frames.json', 'w') as f:
+        json.dump(album_frames, f)
 
     # Change tensors to 1d-arrays
     m = nn.Sigmoid()
@@ -84,7 +90,6 @@ def evaluate_gate(model_gate, model_cls, model_vigat_local, model_vigat_global, 
     preds[preds < args.threshold] = 0
     preds = preds.numpy()
     scores = scores.numpy()
-    t1 = time.perf_counter()
 
     class_of_video = class_of_video.numpy()
     class_vids = class_vids.numpy()
@@ -118,11 +123,12 @@ def evaluate_gate(model_gate, model_cls, model_vigat_local, model_vigat_global, 
 
         for t in range(cls_number):
             print('classifier_{}: map={:.2f} cls_frames={}'.format(t, class_ap[t], args.t_step[t]))
-        print('map_micro={:.2f} map_macro={:.2f} accuracy={:.2f} dt={:.2f}sec'.format(map_micro, map_macro, acc * 100, t1 - t0))
+        print('map_micro={:.2f} map_macro={:.2f} accuracy={:.2f}'.format(map_micro, map_macro, acc * 100))
         print('Total Exits per Classifier: {}'.format(class_vids))
         print('Average Frames taken: {}'.format(avg_frames))
         print(cr)
         showCM(cms)
+
 
 def main():
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
