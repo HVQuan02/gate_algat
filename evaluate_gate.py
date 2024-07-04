@@ -1,9 +1,8 @@
 import sys
-import json
 import torch
 import numpy as np
 import torch.nn as nn
-from dataset import CUFED
+from dataset import CUFED, PEC
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from options.test_options import TestOptions
@@ -80,8 +79,8 @@ def evaluate_gate(model_gate, model_cls, model_vigat_local, model_vigat_global, 
             scores[gidx:gidx+shape, :] = out_data.cpu()
             gidx += shape
 
-    with open('/kaggle/working/album_frames.json', 'w') as f:
-        json.dump(album_frames, f)
+    # with open('/kaggle/working/album_frames.json', 'w') as f:
+    #     json.dump(album_frames, f)
 
     # Change tensors to 1d-arrays
     m = nn.Sigmoid()
@@ -90,6 +89,8 @@ def evaluate_gate(model_gate, model_cls, model_vigat_local, model_vigat_global, 
     preds[preds < args.threshold] = 0
     preds = preds.numpy()
     scores = scores.numpy()
+    if preds.sum() == 0:
+        preds[np.argmax(scores)] = 1
 
     class_of_video = class_of_video.numpy()
     class_vids = class_vids.numpy()
@@ -118,8 +119,15 @@ def evaluate_gate(model_gate, model_cls, model_vigat_local, model_vigat_global, 
             current_labels = np.delete(current_labels, columns_to_delete, 1)
             current_scores = np.delete(current_scores, columns_to_delete, 1)
             class_ap[t] = AP_partial(current_labels, current_scores)[2]
-            # class_ap[t] = average_precision_score(dataset.labels[class_of_video == t, :],
-            # scores[class_of_video == t, :], average='samples')
+
+            # current_preds = preds[class_of_video == t, :]
+            # current_preds = np.delete(current_preds, columns_to_delete, 1)
+            # sv = np.where(class_of_video == t)[0]
+            # idx = np.where(current_labels != current_preds)[0]
+            # print('inaccurate albums of cls {}: {}'.format(t, np.array(dataset.videos)[sv[idx]]))
+            
+#             class_ap[t] = AP_partial(dataset.labels[class_of_video == t, :],
+#             scores[class_of_video == t, :], average='samples')
 
         for t in range(cls_number):
             print('classifier_{}: map={:.2f} cls_frames={}'.format(t, class_ap[t], args.t_step[t]))
@@ -134,7 +142,9 @@ def main():
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
     if args.dataset == 'cufed':
-        dataset = CUFED(args.dataset_root, feats_dir=args.feats_dir, split_dir=args.split_dir, is_train=False)
+        dataset = CUFED(root_dir=args.dataset_root, feats_dir=args.feats_dir, split_dir=args.split_dir, is_train=False)
+    elif args.dataset == 'pec':
+        dataset = PEC(root_dir=args.dataset_root, feats_dir=args.feats_dir, split_dir=args.split_dir, is_train=False)
     else:
         sys.exit("Unknown dataset!")
         

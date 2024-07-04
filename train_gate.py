@@ -4,7 +4,7 @@ import time
 import torch
 import numpy as np
 import torch.nn as nn
-from dataset import CUFED
+from dataset import CUFED, PEC
 import torch.optim as optim
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
@@ -89,6 +89,7 @@ def train_frame(model_cls, model_gate, model_vigat_local, model_vigat_global, da
             loss_t = crit(out_data, label).mean(dim=-1)
             e_t = args.beta * torch.exp(torch.tensor(t_array[t]) / 2.)
             labels_gate = loss_t < e_t
+#             print('labels_gate_{} = {}'.format(t, labels_gate))
             out_data_gate = model_gate(feat_gate.to(device), t)
             loss_gate += crit_gate(out_data_gate, torch.Tensor.float(labels_gate).unsqueeze(dim=1))
 
@@ -169,13 +170,17 @@ def main():
         os.mkdir(args.save_dir)
 
     if args.dataset == 'cufed':
-        train_dataset = CUFED(args.dataset_root, feats_dir=args.feats_dir, split_dir=args.split_dir)
-        val_dataset = CUFED(args.dataset_root, feats_dir=args.feats_dir, split_dir=args.split_dir, is_train=False)
+        train_dataset = CUFED(root_dir=args.dataset_root, feats_dir=args.feats_dir, split_dir=args.split_dir)
+        val_dataset = CUFED(root_dir=args.dataset_root, feats_dir=args.feats_dir, split_dir=args.split_dir, is_train=False)
+        train_loader = DataLoader(train_dataset, batch_size=args.batch_size, num_workers=args.num_workers)
+        val_loader = DataLoader(val_dataset, batch_size=args.batch_size, num_workers=args.num_workers)
+    elif args.dataset == 'pec':
+        train_dataset = PEC(root_dir=args.dataset_root, feats_dir=args.feats_dir, split_dir=args.split_dir)
+        val_dataset = PEC(root_dir=args.dataset_root, feats_dir=args.feats_dir, split_dir=args.split_dir, is_train=False)
+        train_loader = DataLoader(train_dataset, batch_size=args.batch_size, num_workers=args.num_workers, shuffle=True)
+        val_loader = DataLoader(val_dataset, batch_size=args.batch_size, num_workers=args.num_workers)
     else:
         sys.exit("Unknown dataset!")
-
-    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, num_workers=args.num_workers)
-    val_loader = DataLoader(val_dataset, batch_size=args.batch_size, num_workers=args.num_workers)
 
     if args.verbose:
         print("running on {}".format(device))
