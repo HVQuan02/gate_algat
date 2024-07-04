@@ -4,12 +4,12 @@ import numpy as np
 import torch.nn as nn
 from dataset import CUFED, PEC
 import torch.nn.functional as F
+from utils import AP_partial, showCM
 from torch.utils.data import DataLoader
 from options.test_options import TestOptions
 from model import ModelGCNConcAfter as Model
 from sklearn.preprocessing import MinMaxScaler
 from model import ExitingGatesGATCNN as Model_Gate
-from utils import AP_partial, showCM
 from model import ModelGCNConcAfterClassifier as Model_Cls
 from model import ModelGCNConcAfterLocalFrame as Model_Basic_Local
 from model import ModelGCNConcAfterGlobalFrame as Model_Basic_Global
@@ -72,7 +72,7 @@ def evaluate_gate(model_gate, model_cls, model_vigat_local, model_vigat_global, 
                 exit_switch = out_data_gate >= 0.5
                 if exit_switch or t == (cls_number - 1):
                     class_vids[t] += 1
-                    album_frames[t].append(dataset.videos[i])
+                    album_frames[t].append(dataset.albums[i])
                     break
             shape = out_data.shape[0]
             class_of_video[gidx:gidx+shape] = class_selected
@@ -99,43 +99,42 @@ def evaluate_gate(model_gate, model_cls, model_vigat_local, model_vigat_global, 
     class_vids_rate = class_vids / num_total_vids
     avg_frames = int(np.sum(class_vids_rate*args.t_step))
 
-    if args.dataset == 'cufed':
-        map_micro, map_macro = AP_partial(dataset.labels, scores)[1:3]
-        acc = accuracy_score(dataset.labels, preds)
-        class_ap = np.zeros(cls_number)   
-        cms = multilabel_confusion_matrix(dataset.labels, preds)
-        cr = classification_report(dataset.labels, preds)
+    map_micro, map_macro = AP_partial(dataset.labels, scores)[1:3]
+    acc = accuracy_score(dataset.labels, preds)
+    class_ap = np.zeros(cls_number)   
+    cms = multilabel_confusion_matrix(dataset.labels, preds)
+    cr = classification_report(dataset.labels, preds)
 
-        for t in range(cls_number):
-            if sum(class_of_video == t) == 0:
-                print('No Videos fetched by classifier {}'.format(t))
-                continue
-            current_labels = dataset.labels[class_of_video == t, :]
-            current_scores = scores[class_of_video == t, :]
-            columns_to_delete = []
-            for check in range(current_labels.shape[1]):
-                if sum(current_labels[:, check]) == 0:
-                    columns_to_delete.append(check)
-            current_labels = np.delete(current_labels, columns_to_delete, 1)
-            current_scores = np.delete(current_scores, columns_to_delete, 1)
-            class_ap[t] = AP_partial(current_labels, current_scores)[2]
+    for t in range(cls_number):
+        if sum(class_of_video == t) == 0:
+            print('No Videos fetched by classifier {}'.format(t))
+            continue
+        current_labels = dataset.labels[class_of_video == t, :]
+        current_scores = scores[class_of_video == t, :]
+        columns_to_delete = []
+        for check in range(current_labels.shape[1]):
+            if sum(current_labels[:, check]) == 0:
+                columns_to_delete.append(check)
+        current_labels = np.delete(current_labels, columns_to_delete, 1)
+        current_scores = np.delete(current_scores, columns_to_delete, 1)
+        class_ap[t] = AP_partial(current_labels, current_scores)[2]
 
-            # current_preds = preds[class_of_video == t, :]
-            # current_preds = np.delete(current_preds, columns_to_delete, 1)
-            # sv = np.where(class_of_video == t)[0]
-            # idx = np.where(current_labels != current_preds)[0]
-            # print('inaccurate albums of cls {}: {}'.format(t, np.array(dataset.videos)[sv[idx]]))
-            
+        # current_preds = preds[class_of_video == t, :]
+        # current_preds = np.delete(current_preds, columns_to_delete, 1)
+        # sv = np.where(class_of_video == t)[0]
+        # idx = np.where(current_labels != current_preds)[0]
+        # print('inaccurate albums of cls {}: {}'.format(t, np.array(dataset.albums)[sv[idx]]))
+
 #             class_ap[t] = AP_partial(dataset.labels[class_of_video == t, :],
 #             scores[class_of_video == t, :], average='samples')
 
-        for t in range(cls_number):
-            print('classifier_{}: map={:.2f} cls_frames={}'.format(t, class_ap[t], args.t_step[t]))
-        print('map_micro={:.2f} map_macro={:.2f} accuracy={:.2f}'.format(map_micro, map_macro, acc * 100))
-        print('Total Exits per Classifier: {}'.format(class_vids))
-        print('Average Frames taken: {}'.format(avg_frames))
-        print(cr)
-        showCM(cms)
+    for t in range(cls_number):
+        print('classifier_{}: map={:.2f} cls_frames={}'.format(t, class_ap[t], args.t_step[t]))
+    print('map_micro={:.2f} map_macro={:.2f} accuracy={:.2f}'.format(map_micro, map_macro, acc * 100))
+    print('Total Exits per Classifier: {}'.format(class_vids))
+    print('Average Frames taken: {}'.format(avg_frames))
+    print(cr)
+    showCM(cms)
 
 
 def main():

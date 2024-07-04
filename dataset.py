@@ -49,13 +49,13 @@ class CUFED(Dataset):
                 labels_np[i, idx] = 1
 
         self.labels = labels_np
-        self.videos = vidname_list
+        self.albums = vidname_list
 
     def __len__(self):
-        return len(self.videos)
+        return len(self.albums)
 
     def __getitem__(self, idx):
-        name = self.videos[idx]
+        name = self.albums[idx]
         local_path = os.path.join(self.feats_dir, self.local_folder, name + '.npy')
         global_path = os.path.join(self.feats_dir, self.global_folder, name + '.npy')
 
