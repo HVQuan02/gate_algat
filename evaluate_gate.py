@@ -82,15 +82,27 @@ def evaluate_gate(model_gate, model_cls, model_vigat_local, model_vigat_global, 
     # with open('/kaggle/working/album_frames.json', 'w') as f:
     #     json.dump(album_frames, f)
 
-    # Change tensors to 1d-arrays
-    m = nn.Sigmoid()
-    preds = m(scores)
-    preds[preds >= args.threshold] = 1
-    preds[preds < args.threshold] = 0
-    preds = preds.numpy()
-    scores = scores.numpy()
-    if preds.sum() == 0:
-        preds[np.argmax(scores)] = 1
+    if isinstance(dataset, CUFED):
+        # Change tensors to 1d-arrays
+        m = nn.Sigmoid()
+        preds = m(scores)
+        preds[preds >= args.threshold] = 1
+        preds[preds < args.threshold] = 0
+        preds = preds.numpy()
+        scores = scores.numpy()
+        # Ensure no row has all zeros
+        for i in range(preds.shape[0]):
+            if np.sum(preds[i]) == 0:
+                preds[i][np.argmax(scores[i])] = 1
+    else:
+        scores = scores.numpy()
+        preds = np.zeros(scores.shape, dtype=np.float32)
+
+        # Find the index of the maximum value along each row
+        max_indices = np.argmax(scores, axis=1)
+
+        # Set the corresponding elements in 'preds' to 1
+        preds[np.arange(preds.shape[0]), max_indices] = 1
 
     class_of_video = class_of_video.numpy()
     class_vids = class_vids.numpy()
@@ -105,6 +117,8 @@ def evaluate_gate(model_gate, model_cls, model_vigat_local, model_vigat_global, 
     cms = multilabel_confusion_matrix(dataset.labels, preds)
     cr = classification_report(dataset.labels, preds)
 
+    print('albums with only 1 frame:', np.array(dataset.albums)[class_of_video == 0])
+        
     for t in range(cls_number):
         if sum(class_of_video == t) == 0:
             print('No Videos fetched by classifier {}'.format(t))
@@ -119,6 +133,7 @@ def evaluate_gate(model_gate, model_cls, model_vigat_local, model_vigat_global, 
         current_scores = np.delete(current_scores, columns_to_delete, 1)
         class_ap[t] = AP_partial(current_labels, current_scores)[2]
 
+        
         # current_preds = preds[class_of_video == t, :]
         # current_preds = np.delete(current_preds, columns_to_delete, 1)
         # sv = np.where(class_of_video == t)[0]
@@ -128,13 +143,13 @@ def evaluate_gate(model_gate, model_cls, model_vigat_local, model_vigat_global, 
 #             class_ap[t] = AP_partial(dataset.labels[class_of_video == t, :],
 #             scores[class_of_video == t, :], average='samples')
 
-    for t in range(cls_number):
-        print('classifier_{}: map={:.2f} cls_frames={}'.format(t, class_ap[t], args.t_step[t]))
-    print('map_micro={:.2f} map_macro={:.2f} accuracy={:.2f}'.format(map_micro, map_macro, acc * 100))
-    print('Total Exits per Classifier: {}'.format(class_vids))
-    print('Average Frames taken: {}'.format(avg_frames))
-    print(cr)
-    showCM(cms)
+#     for t in range(cls_number):
+#         print('classifier_{}: map={:.2f} cls_frames={}'.format(t, class_ap[t], args.t_step[t]))
+#     print('map_micro={:.2f} map_macro={:.2f} accuracy={:.2f}'.format(map_micro, map_macro, acc * 100))
+#     print('Total Exits per Classifier: {}'.format(class_vids))
+#     print('Average Frames taken: {}'.format(avg_frames))
+#     print(cr)
+#     showCM(cms)
 
 
 def main():
